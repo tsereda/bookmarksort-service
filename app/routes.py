@@ -1,9 +1,8 @@
-# routes.py
 from flask import request, current_app
 from flask_restx import Namespace, Resource, fields
 from http import HTTPStatus
 from models import Bookmark
-from flask import jsonify
+from functools import wraps
 
 ns = Namespace('bookmarks', description='Bookmark operations')
 
@@ -58,20 +57,25 @@ update_params_model = ns.model('UpdateParams', {
     'top_n_words': fields.Integer(description='Number of top words per topic')
 })
 
+def require_model_ready(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not current_app.organizer.is_ready:
+            return {"success": False, "error": "Model is still initializing. Please try again later."}, HTTPStatus.SERVICE_UNAVAILABLE
+        return f(*args, **kwargs)
+    return decorated
+
 def init_routes(api):
     api.add_namespace(ns)
 
     @ns.route('/process')
     class ProcessBookmarks(Resource):
         @ns.marshal_with(bookmark_response_model)
+        @require_model_ready
         def post(self):
             """Process all bookmarks in the database and organize them by topics"""
-            organizer = current_app.organizer
-            if not organizer.is_ready:
-                return {"success": False, "error": "Model is still initializing. Please try again later."}, HTTPStatus.SERVICE_UNAVAILABLE
-
             try:
-                result = organizer.process_bookmarks()
+                result = current_app.organizer.process_bookmarks()
                 return {"success": True, "organized_bookmarks": result}
             except Exception as e:
                 current_app.logger.error(f"Error processing bookmarks: {str(e)}")
@@ -81,15 +85,12 @@ def init_routes(api):
     class AddBookmark(Resource):
         @ns.expect(bookmark_model)
         @ns.marshal_with(bookmark_response_model)
+        @require_model_ready
         def post(self):
             """Add a new bookmark"""
-            organizer = current_app.organizer
-            if not organizer.is_ready:
-                return {"success": False, "error": "Model is still initializing. Please try again later."}, HTTPStatus.SERVICE_UNAVAILABLE
-
             bookmark = request.json
             try:
-                result = organizer.add_bookmark(bookmark)
+                result = current_app.organizer.add_bookmark(bookmark)
                 return {"success": True, "organized_bookmarks": result}
             except Exception as e:
                 current_app.logger.error(f"Error adding bookmark: {str(e)}")
@@ -103,47 +104,38 @@ def init_routes(api):
         @ns.marshal_with(bookmarks_list_model)
         def get(self):
             """List all bookmarks, optionally filtered by topic"""
-            organizer = current_app.organizer
             topic = request.args.get('topic')
             page = int(request.args.get('page', 1))
             per_page = int(request.args.get('per_page', 20))
-            return organizer.list_bookmarks(topic, page, per_page)
+            return current_app.organizer.list_bookmarks(topic, page, per_page)
 
     @ns.route('/search')
     @ns.param('q', 'Search query')
     class SearchBookmarks(Resource):
         @ns.marshal_with(search_result_model)
+        @require_model_ready
         def get(self):
             """Search bookmarks by keyword"""
-            organizer = current_app.organizer
-            if not organizer.is_ready:
-                return {"error": "Model is still initializing. Please try again later."}, HTTPStatus.SERVICE_UNAVAILABLE
-
             query = request.args.get('q')
             if not query:
                 return {"error": "Search query is required"}, HTTPStatus.BAD_REQUEST
-
-            return organizer.search_bookmarks(query)
+            return current_app.organizer.search_bookmarks(query)
 
     @ns.route('/topics')
     class Topics(Resource):
         @ns.marshal_with(topic_model)
         def get(self):
             """Get all topics and their bookmark counts"""
-            organizer = current_app.organizer
-            return organizer.get_topics()
+            return current_app.organizer.get_topics()
 
     @ns.route('/visualization')
     class Visualization(Resource):
         @ns.marshal_with(visualization_model)
+        @require_model_ready
         def get(self):
             """Get visualization data for bookmarks"""
-            organizer = current_app.organizer
-            if not organizer.is_ready:
-                return {"success": False, "error": "Model is still initializing. Please try again later."}, HTTPStatus.SERVICE_UNAVAILABLE
-            
             try:
-                visualization_data = organizer.get_visualization_data()
+                visualization_data = current_app.organizer.get_visualization_data()
                 return {"success": True, "visualization_data": visualization_data}
             except Exception as e:
                 current_app.logger.error(f"Error getting visualization data: {str(e)}")
@@ -154,11 +146,10 @@ def init_routes(api):
         @ns.expect(update_params_model)
         def post(self):
             """Update the parameters for the bookmark organizer"""
-            organizer = current_app.organizer
             new_params = request.json
             try:
-                organizer.update_parameters(new_params)
-                return jsonify({"success": True, "message": "Parameters updated successfully"})
+                current_app.organizer.update_parameters(new_params)
+                return {"success": True, "message": "Parameters updated successfully"}
             except Exception as e:
                 current_app.logger.error(f"Error updating parameters: {str(e)}")
-                return jsonify({"success": False, "error": str(e)}), HTTPStatus.INTERNAL_SERVER_ERROR
+                return {"success": False, "error": str(e)}, HTTPStatus.INTERNAL_SERVER_ERROR
