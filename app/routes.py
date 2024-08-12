@@ -6,6 +6,12 @@ from functools import wraps
 
 ns = Namespace('bookmarks', description='Bookmark operations')
 
+status_model = ns.model('Status', {
+    'is_ready': fields.Boolean(description='Whether the bookmark organizer is ready'),
+    'status': fields.String(description='Current status of the bookmark organizer'),
+    'version': fields.String(description='Version of the bookmark organizer')
+})
+
 # API models
 bookmark_model = ns.model('Bookmark', {
     'url': fields.String(required=True, description='The bookmark URL'),
@@ -67,6 +73,17 @@ def require_model_ready(f):
 
 def init_routes(api):
     api.add_namespace(ns)
+
+    @ns.route('/status')
+    class Status(Resource):
+        @ns.marshal_with(status_model)
+        def get(self):
+            """Get the current status of the bookmark organizer"""
+            return {
+                'is_ready': current_app.organizer.is_ready,
+                'status': 'ready' if current_app.organizer.is_ready else 'initializing',
+                'version': current_app.config.get('VERSION', 'unknown')
+            }
 
     @ns.route('/process')
     class ProcessBookmarks(Resource):
