@@ -45,16 +45,19 @@ def create_app(config_class=Config):
                 nr_topics="auto",
                 top_n_words=10
             )
+            app.organizer.fit_model()
         except Exception as e:
-            app.logger.error(f"Error initializing model: {str(e)}")
+            app.logger.error(f"Error initializing or fitting model: {str(e)}")
 
     # Start the initialization in a separate thread
     Thread(target=initialize_model_async).start()
 
     @app.route('/status')
     def status():
-        if app.organizer.is_ready:
+        if app.organizer.is_ready and app.organizer.is_fitted:
             return {"status": "ready"}, 200
+        elif app.organizer.is_ready and not app.organizer.is_fitted:
+            return {"status": "ready but not fitted"}, 202
         elif app.organizer.is_initializing:
             return {"status": "initializing"}, 202
         else:

@@ -18,9 +18,17 @@ bookmark_model = ns.model('Bookmark', {
     'title': fields.String(required=True, description='The bookmark title')
 })
 
+bookmarks_input_model = ns.model('BookmarksInput', {
+    'bookmarks': fields.List(fields.Nested(bookmark_model), required=True, description='List of bookmarks to add')
+})
+
 bookmark_response_model = ns.model('BookmarkResponse', {
     'success': fields.Boolean(description='Whether the operation was successful'),
-    'organized_bookmarks': fields.Raw(description='Organized bookmarks by topic')
+    'organized_bookmarks': fields.Raw(description='Organized bookmarks by topic'),
+    'errors': fields.List(fields.Nested(ns.model('ErrorDetail', {
+        'url': fields.String(description='URL of the bookmark that failed'),
+        'error': fields.String(description='Error message')
+    })), description='List of errors for failed bookmarks')
 })
 
 bookmarks_list_model = ns.model('BookmarksList', {
@@ -68,6 +76,8 @@ def require_model_ready(f):
     def decorated(*args, **kwargs):
         if not current_app.organizer.is_ready:
             return {"success": False, "error": "Model is still initializing. Please try again later."}, HTTPStatus.SERVICE_UNAVAILABLE
+        if not current_app.organizer.is_fitted:
+            return {"success": False, "error": "Model is not fitted yet. Please add some bookmarks first."}, HTTPStatus.SERVICE_UNAVAILABLE
         return f(*args, **kwargs)
     return decorated
 
@@ -99,19 +109,40 @@ def init_routes(api):
                 return {"success": False, "error": str(e)}, HTTPStatus.INTERNAL_SERVER_ERROR
 
     @ns.route('/add')
-    class AddBookmark(Resource):
-        @ns.expect(bookmark_model)
+    class AddBookmarks(Resource):
+        @ns.expect(bookmarks_input_model)
         @ns.marshal_with(bookmark_response_model)
-        @require_model_ready
         def post(self):
-            """Add a new bookmark"""
-            bookmark = request.json
-            try:
-                result = current_app.organizer.add_bookmark(bookmark)
-                return {"success": True, "organized_bookmarks": result}
-            except Exception as e:
-                current_app.logger.error(f"Error adding bookmark: {str(e)}")
-                return {"success": False, "error": str(e)}, HTTPStatus.INTERNAL_SERVER_ERROR
+            """Add one or more bookmarks"""
+            data = request.json
+            bookmarks = data.get('bookmarks', [])
+            
+            if not isinstance(bookmarks, list):
+                return {"success": False, "error": "Invalid input: 'bookmarks' must be a list"}, HTTPStatus.BAD_REQUEST
+
+            results = []
+            errors = []
+
+            for bookmark in bookmarks:
+                try:
+                    result = current_app.organizer.add_bookmark(bookmark)
+                    results.append(result)
+                except Exception as e:
+                    current_app.logger.error(f"Error adding bookmark {bookmark.get('url', 'unknown')}: {str(e)}")
+                    errors.append({"url": bookmark.get('url', 'unknown'), "error": str(e)})
+
+            organized_bookmarks = {}
+            for result in results:
+                for topic, bookmarks in result.items():
+                    if topic not in organized_bookmarks:
+                        organized_bookmarks[topic] = []
+                    organized_bookmarks[topic].extend(bookmarks)
+
+            return {
+                "success": len(errors) == 0,
+                "organized_bookmarks": organized_bookmarks,
+                "errors": errors
+            }
 
     @ns.route('/list')
     @ns.param('topic', 'Filter bookmarks by topic (optional)')
