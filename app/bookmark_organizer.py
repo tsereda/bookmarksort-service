@@ -175,32 +175,53 @@ class BookmarkOrganizer:
         finally:
             session.close()
 
-    def get_visualization_data(self) -> Dict:
-        session = self.Session()
-        try:
-            bookmarks = session.query(Bookmark).all()
-            
-            embeddings = np.array([bookmark.embedding for bookmark in bookmarks])
-            pca = PCA(n_components=2)
-            projections = pca.fit_transform(embeddings)
-            
-            visualization_data = {
-                "nodes": [
-                    {
-                        "id": bookmark.id,
-                        "url": bookmark.url,
-                        "title": bookmark.title,
-                        "topic": bookmark.topic,
-                        "x": float(projections[i][0]),
-                        "y": float(projections[i][1])
-                    }
-                    for i, bookmark in enumerate(bookmarks)
-                ],
-                "links": []  # You can add links between related bookmarks if needed
-            }
-            return visualization_data
-        finally:
-            session.close()
+def get_visualization_data(self) -> Dict:
+    session = self.Session()
+    try:
+        bookmarks = session.query(Bookmark).all()
+        
+        if not bookmarks:
+            return {"nodes": [], "links": []}
+        
+        embeddings = []
+        valid_bookmarks = []
+        
+        for bookmark in bookmarks:
+            if bookmark.embedding and len(bookmark.embedding) > 0:
+                embeddings.append(bookmark.embedding)
+                valid_bookmarks.append(bookmark)
+        
+        if not embeddings:
+            return {"nodes": [], "links": []}
+        
+        embeddings = np.array(embeddings)
+        
+        if embeddings.ndim == 1:
+            embeddings = embeddings.reshape(-1, 1)
+        
+        pca = PCA(n_components=2)
+        projections = pca.fit_transform(embeddings)
+        
+        visualization_data = {
+            "nodes": [
+                {
+                    "id": bookmark.id,
+                    "url": bookmark.url,
+                    "title": bookmark.title,
+                    "topic": bookmark.topic,
+                    "x": float(projections[i][0]),
+                    "y": float(projections[i][1])
+                }
+                for i, bookmark in enumerate(valid_bookmarks)
+            ],
+            "links": []  # You can add links between related bookmarks if needed
+        }
+        return visualization_data
+    except Exception as e:
+        logger.error(f"Error in get_visualization_data: {str(e)}")
+        return {"nodes": [], "links": []}
+    finally:
+        session.close()
 
     def update_parameters(self, new_params: Dict):
         if self.is_initializing:
