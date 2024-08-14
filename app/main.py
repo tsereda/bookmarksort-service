@@ -2,6 +2,7 @@ import argparse
 from flask import Flask
 from flask_restx import Api
 from flask_cors import CORS
+from flask_caching import Cache
 from config import Config
 from models import init_db
 from routes import init_routes
@@ -19,6 +20,9 @@ def create_app(config_class=Config):
 
     # Set up CORS
     CORS(app, resources={r"/*": {"origins": "*"}})
+
+    # Set up caching
+    cache = Cache(app)
 
     # Set up API
     api = Api(app, version='1.0', title='Bookmark Organizer API',
@@ -53,6 +57,7 @@ def create_app(config_class=Config):
     Thread(target=initialize_model_async).start()
 
     @app.route('/status')
+    @cache.cached(timeout=60)  # Cache for 1 minute
     def status():
         if app.organizer.is_ready and app.organizer.is_fitted:
             return {"status": "ready"}, 200

@@ -188,7 +188,7 @@ def init_routes(api):
             except Exception as e:
                 current_app.logger.error(f"Error getting visualization data: {str(e)}")
                 return {"success": False, "error": str(e)}, HTTPStatus.INTERNAL_SERVER_ERROR
-            
+        
     @ns.route('/update_params')
     class UpdateParams(Resource):
         @ns.expect(update_params_model)

@@ -292,6 +292,7 @@ class BookmarkOrganizer:
             projections = pca.fit_transform(embeddings)
             
             visualization_data = {
+                "type": "node-link",  # Add this line to specify the visualization type
                 "nodes": [
                     {
                         "id": bookmark.id,
@@ -308,7 +309,7 @@ class BookmarkOrganizer:
             return visualization_data
         except Exception as e:
             logger.error(f"Error in get_visualization_data: {str(e)}")
-            return {"nodes": [], "links": []}
+            return {"error": str(e)}
         finally:
             session.close()
 
