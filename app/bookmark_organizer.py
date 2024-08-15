@@ -272,39 +272,32 @@ class BookmarkOrganizer:
             if not bookmarks:
                 return {"nodes": [], "links": []}
             
-            embeddings = []
-            valid_bookmarks = []
-            
-            for bookmark in bookmarks:
-                if bookmark.embedding and len(bookmark.embedding) > 0:
-                    embeddings.append(bookmark.embedding)
-                    valid_bookmarks.append(bookmark)
+            embeddings = [bookmark.embedding for bookmark in bookmarks if bookmark.embedding]
             
             if not embeddings:
                 return {"nodes": [], "links": []}
             
-            embeddings = np.array(embeddings)
+            embeddings_array = np.array(embeddings)
             
-            if embeddings.ndim == 1:
-                embeddings = embeddings.reshape(-1, 1)
+            # Perform UMAP dimension reduction
+            reduced_embeddings = self.umap_model.fit_transform(embeddings_array)
             
-            pca = PCA(n_components=2)
-            projections = pca.fit_transform(embeddings)
+            # Normalize the reduced embeddings to [0, 1] range
+            reduced_embeddings = (reduced_embeddings - reduced_embeddings.min(axis=0)) / (reduced_embeddings.max(axis=0) - reduced_embeddings.min(axis=0))
             
             visualization_data = {
-                "type": "node-link",  # Add this line to specify the visualization type
                 "nodes": [
                     {
-                        "id": bookmark.id,
+                        "id": str(bookmark.id),  # Ensure id is a string
                         "url": bookmark.url,
                         "title": bookmark.title,
-                        "topic": bookmark.topic,
-                        "x": float(projections[i][0]),
-                        "y": float(projections[i][1])
+                        "topic": bookmark.topic if bookmark.topic else "Uncategorized",  # Ensure all bookmarks have a topic
+                        "x": float(reduced_embeddings[i][0]),
+                        "y": float(reduced_embeddings[i][1])
                     }
-                    for i, bookmark in enumerate(valid_bookmarks)
+                    for i, bookmark in enumerate(bookmarks) if bookmark.embedding
                 ],
-                "links": []  # You can add links between related bookmarks if needed
+                "links": []  # We'll create links based on the hierarchical structure in the frontend
             }
             return visualization_data
         except Exception as e:
