@@ -41,11 +41,6 @@ def create_app(config_class=Config):
         try:
             app.organizer.initialize(
                 embedding_model="all-MiniLM-L6-v2",
-                umap_n_neighbors=15,
-                umap_n_components=5,
-                umap_min_dist=0.0,
-                hdbscan_min_cluster_size=15,
-                hdbscan_min_samples=10,
                 nr_topics="auto",
                 top_n_words=10
             )
@@ -68,7 +63,14 @@ def create_app(config_class=Config):
         else:
             return {"status": "not started"}, 500
 
+
+
     return app
+
+    @app.errorhandler(500)
+    def handle_500_error(e):
+        app.logger.error(f'An unhandled exception occurred: {str(e)}')
+        return jsonify(error=str(e)), 500
 
 def main():
     parser = argparse.ArgumentParser(description='Bookmark Organizer API')
@@ -77,6 +79,8 @@ def main():
     args = parser.parse_args()
 
     app = create_app()
+    logging.basicConfig(level=logging.DEBUG)
+    app.logger.setLevel(logging.DEBUG)
     app.run(debug=args.debug, port=args.port, threaded=True)
 
 if __name__ == '__main__':

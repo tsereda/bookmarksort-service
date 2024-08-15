@@ -50,11 +50,6 @@ search_result_model = ns.model('SearchResult', {
     'similarity': fields.Float(description='Similarity score')
 })
 
-topic_model = ns.model('Topic', {
-    'topic': fields.String(description='Topic name'),
-    'count': fields.Integer(description='Number of bookmarks in this topic')
-})
-
 visualization_model = ns.model('Visualization', {
     'success': fields.Boolean(description='Whether the operation was successful'),
     'visualization_data': fields.Raw(description='Visualization data for bookmarks')
@@ -69,6 +64,36 @@ update_params_model = ns.model('UpdateParams', {
     'hdbscan_min_samples': fields.Integer(description='HDBSCAN min_samples parameter'),
     'nr_topics': fields.String(description='Number of topics'),
     'top_n_words': fields.Integer(description='Number of top words per topic')
+})
+
+word_score_model = ns.model('WordScore', {
+    'word': fields.String(description='Topic word'),
+    'score': fields.Float(description='Word score')
+})
+
+topic_model = ns.model('Topic', {
+    'topic': fields.Integer(description='Topic ID'),
+    'count': fields.Integer(description='Number of bookmarks in this topic'),
+    'name': fields.String(description='Topic name'),
+    'representation': fields.List(fields.Nested(word_score_model), description='Topic representation')
+})
+
+hierarchical_topic_model = ns.model('HierarchicalTopic', {
+    'id': fields.String(description='Topic ID or name'),
+    'name': fields.String(description='Topic name'),
+    'parent': fields.String(description='Parent Topic ID or name', required=False),
+    'distance': fields.Float(description='Distance from parent topic', required=False),
+    'children': fields.List(fields.Nested(lambda: hierarchical_topic_model), required=False)
+})
+
+hierarchical_topics_model = ns.model('HierarchicalTopics', {
+    'topics': fields.List(fields.Nested(hierarchical_topic_model), description='Hierarchical topic structure')
+})
+
+visualization_data_model = ns.model('VisualizationData', {
+    'topic_visualization': fields.Raw(description='Topic visualization data'),
+    'document_visualization': fields.Raw(description='Document visualization data'),
+    'hierarchy_visualization': fields.Raw(description='Hierarchy visualization data')
 })
 
 def require_model_ready(f):
@@ -188,6 +213,24 @@ def init_routes(api):
             except Exception as e:
                 current_app.logger.error(f"Error getting visualization data: {str(e)}")
                 return {"success": False, "error": str(e)}, HTTPStatus.INTERNAL_SERVER_ERROR
+
+            
+    @ns.route('/hierarchical_topics')
+    class HierarchicalTopics(Resource):
+        @ns.marshal_with(hierarchical_topics_model)
+        @require_model_ready
+        def get(self):
+            """Get hierarchical topic structure"""
+            topics = current_app.organizer.get_hierarchical_topics()
+            return {"topics": topics}
+
+    @ns.route('/visualization_data')
+    class VisualizationData(Resource):
+        @ns.marshal_with(visualization_data_model)  # You'll need to define this model
+        @require_model_ready
+        def get(self):
+            """Get visualization data for topics and documents"""
+            return current_app.organizer.get_visualization_data()
         
     @ns.route('/update_params')
     class UpdateParams(Resource):
