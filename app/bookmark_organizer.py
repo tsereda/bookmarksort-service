@@ -21,6 +21,8 @@ class BookmarkOrganizer:
         self.is_fitted = False
         self.hierarchical_topics = None
 
+        self.logger = logging.getLogger(__name__)
+
     def initialize(self, embedding_model="all-MiniLM-L6-v2", nr_topics="auto", top_n_words=10):
         if self.is_initializing:
             return
@@ -50,26 +52,49 @@ class BookmarkOrganizer:
         try:
             bookmarks = session.query(Bookmark).all()
             if not bookmarks:
-                logger.warning("No bookmarks available to fit the model.")
+                self.logger.warning("No bookmarks available to fit the model.")
                 return
 
             texts = [f"{b.title} {b.url}" for b in bookmarks]
-            self.topic_model.fit(texts)
+            
+            # Fit the model
+            topics, _ = self.topic_model.fit_transform(texts)
             self.is_fitted = True
-            logger.info("BERTopic model fitted successfully.")
+            self.logger.info("BERTopic model fitted successfully.")
             
             # Generate hierarchical topics
-            self.hierarchical_topics = self.topic_model.hierarchical_topics(
-                docs=texts,
-                linkage_function=None,
-                distance_function=None
-            )
-            logger.info("Hierarchical topics generated successfully.")
+            hierarchical_topics = self.topic_model.hierarchical_topics(texts)
+            self.hierarchical_topics = hierarchical_topics
+
+            self.logger.info(f"Hierarchical topics: {hierarchical_topics}")
+            
+            # Generate topic names directly from hierarchical topics
+            self.topic_names = {topic[0]: f"Topic_{topic[0]}" for topic in self.hierarchical_topics if len(topic) >= 2}
+            
+            # Update bookmarks with topic names
+            for bookmark, topic in zip(bookmarks, topics):
+                topic_id = int(topic)
+                bookmark.topic = self.topic_names.get(topic_id, f"Topic_{topic_id}")
+                session.add(bookmark)
+            
+            session.commit()
+            self.logger.info("Hierarchical topics generated successfully.")
         except Exception as e:
-            logger.error(f"Failed to fit BERTopic model: {str(e)}")
+            session.rollback()
+            self.logger.error(f"Failed to fit BERTopic model: {str(e)}")
             raise
         finally:
             session.close()
+
+    def _generate_topic_names_from_hierarchy(self):
+        topic_names = {}
+        for topic in self.hierarchical_topics:
+            if len(topic) < 2:
+                continue
+            topic_id, _, *_ = topic
+            topic_names[topic_id] = f"Topic_{topic_id}"
+        return topic_names
+
 
     def add_bookmark(self, bookmark: Dict) -> Dict:
         if not self.is_ready or not self.is_fitted:
@@ -209,44 +234,45 @@ class BookmarkOrganizer:
         if not self.is_ready or not self.is_fitted or self.hierarchical_topics is None:
             raise RuntimeError("Hierarchical topics are not available")
         
-        if isinstance(self.hierarchical_topics, pd.DataFrame):
-            topics = []
-            for _, row in self.hierarchical_topics.iterrows():
-                topic = {
-                    "id": str(row.iloc[0]),
-                    "name": str(row.iloc[0]),
-                    "parent": str(row.iloc[1]) if pd.notnull(row.iloc[1]) else None,
-                }
-                if len(row) > 2:
-                    distance_values = row.iloc[2:][pd.notnull(row.iloc[2:])]
-                    if len(distance_values) > 0:
-                        distance = distance_values.iloc[0]
-                        if isinstance(distance, list):
-                            topic["distance"] = float(distance[0])
-                        else:
-                            topic["distance"] = float(distance)
-                    else:
-                        topic["distance"] = None
-                else:
-                    topic["distance"] = None
-                topics.append(topic)
+        topic_hierarchy = {}
+        
+        for topic in self.hierarchical_topics:
+            topic_id = str(topic[0])
+            parent_id = str(topic[1]) if pd.notnull(topic[1]) else None
             
-            # Build hierarchical structure
-            topic_map = {topic['id']: topic for topic in topics}
-            root_topics = []
-            for topic in topics:
-                if topic['parent'] is None or topic['parent'] not in topic_map:
-                    root_topics.append(topic)
-                else:
-                    parent = topic_map[topic['parent']]
-                    if 'children' not in parent:
-                        parent['children'] = []
-                    parent['children'].append(topic)
+            # Handle the distance value more carefully
+            distance = None
+            if len(topic) > 2 and pd.notnull(topic[2]):
+                try:
+                    distance = float(topic[2])
+                except ValueError:
+                    # If conversion to float fails, log a warning and set distance to None
+                    logging.warning(f"Could not convert distance value '{topic[2]}' to float for topic {topic_id}")
             
-            return root_topics
-        else:
-            logger.error(f"Unexpected hierarchical_topics type: {type(self.hierarchical_topics)}")
-            return []
+            topic_info = {
+                "id": topic_id,
+                "name": f"Topic_{topic_id}",
+                "parent": parent_id,
+                "distance": distance,
+                "children": []
+            }
+            
+            topic_hierarchy[topic_id] = topic_info
+        
+        # Build the hierarchical structure
+        root_topics = []
+        for topic_id, topic_info in topic_hierarchy.items():
+            if topic_info['parent'] is None:
+                root_topics.append(topic_info)
+            else:
+                parent = topic_hierarchy.get(topic_info['parent'])
+                if parent:
+                    parent['children'].append(topic_info)
+                else:
+                    # If parent is not found, treat as root topic
+                    root_topics.append(topic_info)
+        
+        return root_topics
 
     def get_visualization_data(self) -> Dict:
         if not self.is_ready or not self.is_fitted:
@@ -255,43 +281,88 @@ class BookmarkOrganizer:
         session = self.Session()
         try:
             bookmarks = session.query(Bookmark).all()
-            docs = [f"{b.title} {b.url}" for b in bookmarks]
             
-            # Get topic data
-            topic_data = self.topic_model.get_topic_info()
-            topics = []
-            for _, row in topic_data.iterrows():
-                topic = {
-                    'id': int(row['Topic']),
-                    'name': row['Name'],
-                    'count': int(row['Count']),
-                    'top_words': [word for word, _ in self.topic_model.get_topic(row['Topic'])]
+            # Build hierarchical topic structure
+            topic_hierarchy = self._build_hierarchical_topics()
+            
+            # Prepare bookmark data
+            bookmarks_data = [
+                {
+                    'id': bookmark.id,
+                    'topic_id': bookmark.topic.split('_')[1],
+                    'topic_name': bookmark.topic,
+                    'topic_probability': 1.0,  # We don't have this information readily available
+                    'url': bookmark.url,
+                    'title': bookmark.title
                 }
-                topics.append(topic)
+                for bookmark in bookmarks
+            ]
             
-            # Get document data
-            document_data = self.topic_model.get_document_info(docs)
-            documents = []
-            for index, row in document_data.iterrows():
-                doc = {
-                    'id': index,  # Use the DataFrame index as the document ID
-                    'topic': int(row['Topic']),
-                    'probability': float(row['Probability']),
-                    'url': bookmarks[index].url,
-                    'title': bookmarks[index].title
-                }
-                documents.append(doc)
-            
-            # Get hierarchical topic data
-            hierarchical_topics = self.get_hierarchical_topics()
+            # Prepare metadata
+            metadata = {
+                "total_bookmarks": len(bookmarks),
+                "total_topics": len(self.topic_names),
+                "max_hierarchy_depth": self._get_max_depth(topic_hierarchy),
+                "visualization_type": "tree"
+            }
             
             return {
-                "topics": topics,
-                "documents": documents,
-                "hierarchical_topics": hierarchical_topics
+                "metadata": metadata,
+                "topic_hierarchy": topic_hierarchy,
+                "bookmarks": bookmarks_data
             }
         finally:
             session.close()
+
+    def _build_hierarchical_topics(self) -> List[Dict]:
+        topic_info = self.topic_model.get_topic_info()
+        hierarchy = {}
+
+        for topic in self.hierarchical_topics:
+            if len(topic) < 2:
+                self.logger.warning(f"Skipping topic due to insufficient elements: {topic}")
+                continue
+
+            parent, child, *_ = topic
+
+            if child not in self.topic_names:
+                self.logger.warning(f"Skipping topic {child} as it is not found in topic_names")
+                continue
+
+            if child not in hierarchy:
+                hierarchy[child] = {
+                    'id': self.topic_names[child],
+                    'name': self.topic_names[child],
+                    'count': topic_info.loc[topic_info['Topic'] == child, 'Count'].values[0],
+                    'children': []
+                }
+
+            if parent in hierarchy:
+                hierarchy[parent]['children'].append(hierarchy[child])
+
+        # Return only root topics (those without parents)
+        root_topics = [
+            topic for topic_id, topic in hierarchy.items()
+            if topic_id not in [child for parent, child, *_ in self.hierarchical_topics if child is not None]
+        ]
+
+        return root_topics
+
+    def _get_max_depth(self, hierarchy):
+        def get_depth(topic):
+            if not topic['children']:
+                return 1
+            return 1 + max(get_depth(child) for child in topic['children'])
+        
+        return max(get_depth(topic) for topic in hierarchy)
+
+    def _get_max_depth(self, hierarchy):
+        def get_depth(topic):
+            if not topic['children']:
+                return 1
+            return 1 + max(get_depth(child) for child in topic['children'])
+        
+        return max(get_depth(topic) for topic in hierarchy)
 
     def update_parameters(self, new_params: Dict):
         if self.is_initializing:

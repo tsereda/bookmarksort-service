@@ -90,20 +90,26 @@ hierarchical_topic_model = topics_ns.model('HierarchicalTopic', {
 })
 
 visualization_data_model = visualization_ns.model('VisualizationData', {
-    'topics': fields.List(fields.Nested(visualization_ns.model('TopicData', {
-        'id': fields.Integer(description='Topic ID'),
+    'metadata': fields.Nested(visualization_ns.model('Metadata', {
+        'total_bookmarks': fields.Integer(description='Total number of bookmarks'),
+        'total_topics': fields.Integer(description='Total number of topics'),
+        'max_hierarchy_depth': fields.Integer(description='Maximum depth of topic hierarchy'),
+        'visualization_type': fields.String(description='Type of visualization')
+    })),
+    'topic_hierarchy': fields.List(fields.Nested(visualization_ns.model('TopicHierarchy', {
+        'id': fields.String(description='Topic ID'),
         'name': fields.String(description='Topic name'),
-        'count': fields.Integer(description='Number of documents in this topic'),
-        'top_words': fields.List(fields.String(description='Top words in this topic'))
+        'count': fields.Integer(description='Number of bookmarks in this topic'),
+        'children': fields.List(fields.Raw(description='Child topics'))
     }))),
-    'documents': fields.List(fields.Nested(visualization_ns.model('DocumentData', {
-        'id': fields.Integer(description='Document ID'),
-        'topic': fields.Integer(description='Assigned topic ID'),
-        'probability': fields.Float(description='Probability of assignment to this topic'),
+    'bookmarks': fields.List(fields.Nested(visualization_ns.model('BookmarkData', {
+        'id': fields.Integer(description='Bookmark ID'),
+        'topic_id': fields.String(description='Assigned topic ID'),  # Changed to String
+        'topic_name': fields.String(description='Assigned topic name'),  # Added this field
+        'topic_probability': fields.Float(description='Probability of assignment to this topic'),
         'url': fields.String(description='Bookmark URL'),
         'title': fields.String(description='Bookmark title')
-    }))),
-    'hierarchical_topics': fields.List(fields.Nested(hierarchical_topic_model))
+    })))
 })
 
 update_params_model = main_ns.model('UpdateParams', {
@@ -229,7 +235,7 @@ def init_routes(api):
         @visualization_ns.marshal_with(visualization_data_model)
         @require_model_ready
         def get(self):
-            """Get visualization data for topics and documents"""
+            """Get visualization data for topics and bookmarks"""
             return current_app.organizer.get_visualization_data()
 
     @main_ns.route('/update_params')
