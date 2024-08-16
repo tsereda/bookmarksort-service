@@ -257,28 +257,38 @@ class BookmarkOrganizer:
             bookmarks = session.query(Bookmark).all()
             docs = [f"{b.title} {b.url}" for b in bookmarks]
             
-            topic_visualization = self.topic_model.visualize_topics()
-            document_visualization = self.topic_model.visualize_documents(docs)
-            hierarchy_visualization = self.topic_model.visualize_hierarchy()
+            # Get topic data
+            topic_data = self.topic_model.get_topic_info()
+            topics = []
+            for _, row in topic_data.iterrows():
+                topic = {
+                    'id': int(row['Topic']),
+                    'name': row['Name'],
+                    'count': int(row['Count']),
+                    'top_words': [word for word, _ in self.topic_model.get_topic(row['Topic'])]
+                }
+                topics.append(topic)
             
-            def convert_to_json_serializable(obj):
-                if isinstance(obj, np.ndarray):
-                    return obj.tolist()
-                elif isinstance(obj, np.integer):
-                    return int(obj)
-                elif isinstance(obj, np.floating):
-                    return float(obj)
-                elif isinstance(obj, dict):
-                    return {k: convert_to_json_serializable(v) for k, v in obj.items()}
-                elif isinstance(obj, list):
-                    return [convert_to_json_serializable(v) for v in obj]
-                else:
-                    return obj
+            # Get document data
+            document_data = self.topic_model.get_document_info(docs)
+            documents = []
+            for index, row in document_data.iterrows():
+                doc = {
+                    'id': index,  # Use the DataFrame index as the document ID
+                    'topic': int(row['Topic']),
+                    'probability': float(row['Probability']),
+                    'url': bookmarks[index].url,
+                    'title': bookmarks[index].title
+                }
+                documents.append(doc)
+            
+            # Get hierarchical topic data
+            hierarchical_topics = self.get_hierarchical_topics()
             
             return {
-                "topic_visualization": convert_to_json_serializable(topic_visualization.to_dict()),
-                "document_visualization": convert_to_json_serializable(document_visualization.to_dict()),
-                "hierarchy_visualization": convert_to_json_serializable(hierarchy_visualization.to_dict())
+                "topics": topics,
+                "documents": documents,
+                "hierarchical_topics": hierarchical_topics
             }
         finally:
             session.close()

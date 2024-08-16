@@ -90,9 +90,20 @@ hierarchical_topic_model = topics_ns.model('HierarchicalTopic', {
 })
 
 visualization_data_model = visualization_ns.model('VisualizationData', {
-    'topic_visualization': fields.Raw(description='Topic visualization data'),
-    'document_visualization': fields.Raw(description='Document visualization data'),
-    'hierarchy_visualization': fields.Raw(description='Hierarchy visualization data')
+    'topics': fields.List(fields.Nested(visualization_ns.model('TopicData', {
+        'id': fields.Integer(description='Topic ID'),
+        'name': fields.String(description='Topic name'),
+        'count': fields.Integer(description='Number of documents in this topic'),
+        'top_words': fields.List(fields.String(description='Top words in this topic'))
+    }))),
+    'documents': fields.List(fields.Nested(visualization_ns.model('DocumentData', {
+        'id': fields.Integer(description='Document ID'),
+        'topic': fields.Integer(description='Assigned topic ID'),
+        'probability': fields.Float(description='Probability of assignment to this topic'),
+        'url': fields.String(description='Bookmark URL'),
+        'title': fields.String(description='Bookmark title')
+    }))),
+    'hierarchical_topics': fields.List(fields.Nested(hierarchical_topic_model))
 })
 
 update_params_model = main_ns.model('UpdateParams', {
