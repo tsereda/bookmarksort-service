@@ -78,14 +78,20 @@ topic_model = ns.model('Topic', {
     'representation': fields.List(fields.Nested(word_score_model), description='Topic representation')
 })
 
-hierarchical_topic_model = ns.model('HierarchicalTopic', {
+# Add this at the beginning of your model definitions
+hierarchical_topic = ns.model('HierarchicalTopic', {
     'id': fields.String(description='Topic ID or name'),
     'name': fields.String(description='Topic name'),
     'parent': fields.String(description='Parent Topic ID or name', required=False),
-    'distance': fields.Float(description='Distance from parent topic', required=False),
-    'children': fields.List(fields.Nested(lambda: hierarchical_topic_model), required=False)
+    'distance': fields.Float(description='Distance from parent topic', required=False)
 })
 
+# Then update the hierarchical_topic_model definition
+hierarchical_topic_model = ns.inherit('HierarchicalTopicWithChildren', hierarchical_topic, {
+    'children': fields.List(fields.Nested(hierarchical_topic), required=False)
+})
+
+# The rest of your code remains the same
 hierarchical_topics_model = ns.model('HierarchicalTopics', {
     'topics': fields.List(fields.Nested(hierarchical_topic_model), description='Hierarchical topic structure')
 })
