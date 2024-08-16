@@ -3,9 +3,9 @@ from bertopic.representation import KeyBERTInspired
 from sentence_transformers import SentenceTransformer
 import numpy as np
 from typing import List, Dict, Union
-from sqlalchemy import create_engine, func
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from models import Bookmark, Base
+from models import Bookmark, db
 import logging
 import pandas as pd
 
@@ -15,7 +15,6 @@ class BookmarkOrganizer:
     def __init__(self, db_url='sqlite:///bookmarks.db'):
         self.engine = create_engine(db_url)
         self.Session = sessionmaker(bind=self.engine)
-        Base.metadata.create_all(self.engine)
         self.topic_model = None
         self.is_ready = False
         self.is_initializing = False
@@ -39,6 +38,7 @@ class BookmarkOrganizer:
             logger.info("BERTopic model initialization complete.")
         except Exception as e:
             logger.error(f"Failed to initialize BERTopic model: {str(e)}")
+            raise
         finally:
             self.is_initializing = False
 
@@ -64,61 +64,9 @@ class BookmarkOrganizer:
                 linkage_function=None,
                 distance_function=None
             )
-            logger.info(f"Hierarchical topics generated. Type: {type(self.hierarchical_topics)}")
-            logger.info(f"Hierarchical topics shape: {self.hierarchical_topics.shape}")
-            logger.info(f"Hierarchical topics columns: {self.hierarchical_topics.columns}")
-            logger.debug(f"Hierarchical topics content:\n{self.hierarchical_topics}")
+            logger.info("Hierarchical topics generated successfully.")
         except Exception as e:
             logger.error(f"Failed to fit BERTopic model: {str(e)}")
-            logger.exception("Stack trace:")
-        finally:
-            session.close()
-
-    def partial_fit(self, new_texts: List[str]):
-        if not self.is_ready:
-            raise RuntimeError("BERTopic model is not initialized")
-        
-        try:
-            self.topic_model.partial_fit(new_texts)
-            logger.info("Partial fit successful.")
-        except Exception as e:
-            logger.error(f"Failed to perform partial fit: {str(e)}")
-
-    def process_bookmarks(self) -> Dict:
-        if not self.is_ready or not self.is_fitted:
-            raise RuntimeError("BERTopic model is not initialized or fitted")
-
-        session = self.Session()
-        try:
-            bookmarks = session.query(Bookmark).all()
-            if not bookmarks:
-                logger.warning("No bookmarks found to process.")
-                return {}
-
-            texts = [f"{b.title} {b.url}" for b in bookmarks]
-            topics, _ = self.topic_model.transform(texts)
-
-            organized_bookmarks = {}
-            for bookmark, topic in zip(bookmarks, topics):
-                topic_name = f"Topic_{topic}"
-                if topic_name not in organized_bookmarks:
-                    organized_bookmarks[topic_name] = []
-                
-                organized_bookmarks[topic_name].append({
-                    "id": bookmark.id,
-                    "url": bookmark.url,
-                    "title": bookmark.title,
-                })
-
-                bookmark.topic = topic_name
-                session.add(bookmark)
-
-            session.commit()
-            logger.info(f"Processed {len(bookmarks)} bookmarks into {len(organized_bookmarks)} topics.")
-            return organized_bookmarks
-        except Exception as e:
-            session.rollback()
-            logger.error(f"Error processing bookmarks: {str(e)}")
             raise
         finally:
             session.close()
@@ -200,6 +148,45 @@ class BookmarkOrganizer:
         finally:
             session.close()
 
+    def process_bookmarks(self) -> Dict:
+        if not self.is_ready or not self.is_fitted:
+            raise RuntimeError("BERTopic model is not initialized or fitted")
+
+        session = self.Session()
+        try:
+            bookmarks = session.query(Bookmark).all()
+            if not bookmarks:
+                logger.warning("No bookmarks found to process.")
+                return {}
+
+            texts = [f"{b.title} {b.url}" for b in bookmarks]
+            topics, _ = self.topic_model.transform(texts)
+
+            organized_bookmarks = {}
+            for bookmark, topic in zip(bookmarks, topics):
+                topic_name = f"Topic_{topic}"
+                if topic_name not in organized_bookmarks:
+                    organized_bookmarks[topic_name] = []
+                
+                organized_bookmarks[topic_name].append({
+                    "id": bookmark.id,
+                    "url": bookmark.url,
+                    "title": bookmark.title,
+                })
+
+                bookmark.topic = topic_name
+                session.add(bookmark)
+
+            session.commit()
+            logger.info(f"Processed {len(bookmarks)} bookmarks into {len(organized_bookmarks)} topics.")
+            return organized_bookmarks
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error processing bookmarks: {str(e)}")
+            raise
+        finally:
+            session.close()
+
     def get_topics(self) -> List[Dict]:
         if not self.is_ready or not self.is_fitted:
             raise RuntimeError("BERTopic model is not initialized or fitted")
@@ -219,14 +206,8 @@ class BookmarkOrganizer:
         ]
 
     def get_hierarchical_topics(self) -> List[Dict]:
-        logger.info("Entering get_hierarchical_topics method")
-        if self.hierarchical_topics is None:
-            logger.warning("Hierarchical topics have not been generated")
-            return []
-        
-        logger.debug(f"Hierarchical topics type: {type(self.hierarchical_topics)}")
-        logger.debug(f"Hierarchical topics columns: {self.hierarchical_topics.columns}")
-        logger.debug(f"First few rows of hierarchical_topics:\n{self.hierarchical_topics.head()}")
+        if not self.is_ready or not self.is_fitted or self.hierarchical_topics is None:
+            raise RuntimeError("Hierarchical topics are not available")
         
         if isinstance(self.hierarchical_topics, pd.DataFrame):
             topics = []
@@ -262,8 +243,6 @@ class BookmarkOrganizer:
                         parent['children'] = []
                     parent['children'].append(topic)
             
-            logger.debug(f"Processed topics: {topics}")
-            logger.debug(f"Root topics: {root_topics}")
             return root_topics
         else:
             logger.error(f"Unexpected hierarchical_topics type: {type(self.hierarchical_topics)}")

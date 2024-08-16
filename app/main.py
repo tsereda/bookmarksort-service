@@ -1,10 +1,10 @@
 import argparse
-from flask import Flask
+from flask import Flask, jsonify
 from flask_restx import Api
 from flask_cors import CORS
 from flask_caching import Cache
 from config import Config
-from models import init_db
+from models import init_db, db
 from routes import init_routes
 from bookmark_organizer import create_bookmark_organizer
 from threading import Thread
@@ -29,48 +29,51 @@ def create_app(config_class=Config):
               description='An API for organizing bookmarks using BERTopic')
 
     # Initialize database
-    init_db(app)
+    with app.app_context():
+        init_db(app)
 
     # Initialize routes
-    init_routes(api)
+    api = init_routes(api)  # Update this line
 
     # Create and initialize bookmark organizer
-    app.organizer = create_bookmark_organizer()
+    app.organizer = create_bookmark_organizer(app.config['SQLALCHEMY_DATABASE_URI'])
 
     def initialize_model_async():
-        try:
-            app.organizer.initialize(
-                embedding_model="all-MiniLM-L6-v2",
-                nr_topics="auto",
-                top_n_words=10
-            )
-            app.organizer.fit_model()
-        except Exception as e:
-            app.logger.error(f"Error initializing or fitting model: {str(e)}")
+        with app.app_context():
+            try:
+                app.organizer.initialize(
+                    embedding_model="all-MiniLM-L6-v2",
+                    nr_topics="auto",
+                    top_n_words=10
+                )
+                app.organizer.fit_model()
+            except Exception as e:
+                app.logger.error(f"Error initializing or fitting model: {str(e)}")
 
     # Start the initialization in a separate thread
     Thread(target=initialize_model_async).start()
 
     @app.route('/status')
-    @cache.cached(timeout=60)  # Cache for 1 minute
+    @cache.cached(timeout=10)  # Cache for 10 seconds
     def status():
-        if app.organizer.is_ready and app.organizer.is_fitted:
-            return {"status": "ready"}, 200
-        elif app.organizer.is_ready and not app.organizer.is_fitted:
-            return {"status": "ready but not fitted"}, 202
-        elif app.organizer.is_initializing:
-            return {"status": "initializing"}, 202
+        organizer_status = {
+            "is_ready": app.organizer.is_ready,
+            "is_fitted": app.organizer.is_fitted,
+            "is_initializing": app.organizer.is_initializing
+        }
+        if organizer_status["is_ready"] and organizer_status["is_fitted"]:
+            return jsonify({"status": "ready", **organizer_status}), 200
+        elif organizer_status["is_initializing"]:
+            return jsonify({"status": "initializing", **organizer_status}), 202
         else:
-            return {"status": "not started"}, 500
-
-
-
-    return app
+            return jsonify({"status": "not started", **organizer_status}), 500
 
     @app.errorhandler(500)
     def handle_500_error(e):
         app.logger.error(f'An unhandled exception occurred: {str(e)}')
         return jsonify(error=str(e)), 500
+
+    return app
 
 def main():
     parser = argparse.ArgumentParser(description='Bookmark Organizer API')
@@ -79,8 +82,8 @@ def main():
     args = parser.parse_args()
 
     app = create_app()
-    logging.basicConfig(level=logging.DEBUG)
-    app.logger.setLevel(logging.DEBUG)
+    if args.debug:
+        app.logger.setLevel(logging.DEBUG)
     app.run(debug=args.debug, port=args.port, threaded=True)
 
 if __name__ == '__main__':
