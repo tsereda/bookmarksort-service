@@ -58,6 +58,8 @@ class BookmarkOrganizer:
                 self.topic_model.fit(docs)
 
             # Generate hierarchical topics
+            print(self.topic_model.get_topic_info())
+
             hierarchical_topics = self.topic_model.hierarchical_topics(docs)
             return hierarchical_topics.to_dict(orient='records')
         except Exception as e:
