@@ -3,6 +3,9 @@ from flask_cors import CORS
 from flask_restx import Api
 from bookmark_organizer import BookmarkOrganizer, DefaultEmbeddingModel, BERTopicModel, BookmarkDatabase
 from routes import setup_routes
+import logging
+
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 app = Flask(__name__)
 
