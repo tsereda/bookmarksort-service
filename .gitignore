@@ -1,8 +1,0 @@
-venv/
-app/queued_files.txt
-app/utils/__pycache__
-app/__pycache__
-.env
-app/__pycache__/
-bookmarks.db
-.aider*
