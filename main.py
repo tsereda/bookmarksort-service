@@ -1,7 +1,7 @@
-from flask import Flask, jsonify
+from flask import Flask
 from flask_cors import CORS
 from flask_restx import Api
-from bookmark_organizer import init_db, BookmarkOrganizer
+from bookmark_organizer import BookmarkOrganizer, DefaultEmbeddingModel, BERTopicModel, BookmarkDatabase
 from routes import setup_routes
 
 app = Flask(__name__)
@@ -13,14 +13,20 @@ CORS(app, resources={r"/*": {
     "allow_headers": ["Content-Type", "Authorization", "Access-Control-Allow-Credentials"],
 }}, supports_credentials=True)
 
-api = Api(app, version='1.0', title='BERTopic Bookmark API',
-          description='A simple BERTopic Bookmark API with Swagger support')
+api = Api(app, version='1.0', title='Bookmark Organizer API',
+          description='A sophisticated Bookmark Organizer API with topic modeling capabilities')
 
-# Initialize database
-init_db()
+# Initialize components
+embedding_model = DefaultEmbeddingModel()
+topic_model = BERTopicModel()
+database = BookmarkDatabase()
 
 # Create BookmarkOrganizer instance
-bookmark_organizer = BookmarkOrganizer()
+bookmark_organizer = BookmarkOrganizer(
+    embedding_model=embedding_model,
+    topic_model=topic_model,
+    database=database
+)
 
 # Setup routes
 setup_routes(api, bookmark_organizer)
