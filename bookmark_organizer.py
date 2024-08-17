@@ -21,23 +21,23 @@ class DefaultEmbeddingModel(EmbeddingModel):
 
 # Topic Tree Structure
 
-class Topic:
-    def __init__(self, id: str, name: str):
-        self.id: str = id
-        self.name: str = name
-        self.subtopics: Dict[str, 'Topic'] = {}
-        self.bookmarks: List[Bookmark] = []
-
 class Bookmark:
-    def __init__(self, id: int, title: str, url: str, topic_id: str):
+    def __init__(self, id: int, title: str, url: str, topic_id: int):
         self.id: int = id
         self.title: str = title
         self.url: str = url
-        self.topic_id: str = topic_id
+        self.topic_id: int = topic_id
+
+class Topic:
+    def __init__(self, id: int, name: str):
+        self.id: int = id
+        self.name: str = name
+        self.subtopics: Dict[int, 'Topic'] = {}
+        self.bookmarks: List[Bookmark] = []
 
 class TopicTree:
     def __init__(self):
-        self.root: Dict[str, Topic] = {}
+        self.root: Dict[int, Topic] = {}
 
 class TopicModel(ABC):
     @abstractmethod
@@ -106,7 +106,7 @@ class BookmarkDatabase:
                 bookmark['url'],
                 ','.join(bookmark.get('tags', [])),
                 np.array(bookmark.get('embedding', [])).tobytes(),
-                int(bookmark.get('topic', -1))  # Ensure topic is stored as an integer
+                int(bookmark.get('topic'))  # Ensure topic is stored as an integer
             ))
             return c.lastrowid
 
@@ -187,10 +187,6 @@ class BookmarkOrganizer:
 
         return {"message": f"Updated topics for {len(bookmarks)} bookmarks"}
 
-import logging
-from collections import defaultdict
-from typing import List, Dict, Any
-
 class BookmarkTopicTree:
     def __init__(self, bookmark_organizer):
         self.bookmark_organizer = bookmark_organizer
@@ -200,9 +196,10 @@ class BookmarkTopicTree:
     def build_tree(self) -> Dict[str, Any]:
         try:
             hierarchical_topics = self.bookmark_organizer.get_hierarchical_topics()
-            self.logger.debug(f"Hierarchical topics: {hierarchical_topics}")
+            #self.logger.debug(f"Hierarchical topics: {hierarchical_topics}")
             bookmarks = self.bookmark_organizer.list_bookmarks()
             self.logger.debug(f"Number of bookmarks: {len(bookmarks)}")
+            #self.logger.debug(f"Bookmarks: {bookmarks}") 
             
             self._create_tree_structure(hierarchical_topics)
             self._add_bookmarks_to_tree(bookmarks)
@@ -212,67 +209,97 @@ class BookmarkTopicTree:
             self.logger.exception(f"Error building topic tree: {str(e)}")
             return {"error": f"An error occurred while building the topic tree: {str(e)}"}
 
-    def _create_tree_structure(self, hierarchical_topics: List[Dict[str, Any]]):
-        for topic in hierarchical_topics:
-            parent_id = str(topic['Parent_ID'])
-            parent_name = str(topic['Parent_Name'])
-            child_topics = topic['Topics']
-            
-            if parent_id not in self.topic_tree.root:
-                self.topic_tree.root[parent_id] = Topic(parent_id, parent_name)
-            
-            for child_id in child_topics:
-                child_id = str(child_id)
-                child_name = next((t['Child_Left_Name'] for t in hierarchical_topics if t['Child_Left_ID'] == child_id), '')
-                if not child_name:
-                    child_name = next((t['Child_Right_Name'] for t in hierarchical_topics if t['Child_Right_ID'] == child_id), '')
-                
-                if child_id not in self.topic_tree.root[parent_id].subtopics:
-                    self.topic_tree.root[parent_id].subtopics[child_id] = Topic(child_id, child_name)
-
     def _add_bookmarks_to_tree(self, bookmarks: List[Dict[str, Any]]):
         for bookmark_data in bookmarks:
             bookmark = Bookmark(
                 id=bookmark_data['id'],
                 title=bookmark_data['title'],
                 url=bookmark_data['url'],
-                topic_id=str(bookmark_data['topic']) if bookmark_data['topic'] is not None else "Uncategorized"
+                topic_id=bookmark_data['topic'] if bookmark_data['topic'] is not None else -1
             )
 
-            
+            #self.logger.debug(f"Processing bookmark: ID={bookmark.id}, Title='{bookmark.title}', Topic ID={bookmark.topic_id}")
+
             topic = self._find_topic_by_id(self.topic_tree.root, bookmark.topic_id)
             if topic:
+                #self.logger.debug(f"Found topic for bookmark: Topic ID={topic.id}, Topic Name='{topic.name}'")
                 topic.bookmarks.append(bookmark)
-                print("Appending bookmark to topic: {}".format(topic))
+                #self.logger.debug(f"Appended bookmark '{bookmark.title}' to topic '{topic.name}'. Topic now has {len(topic.bookmarks)} bookmarks.")
             else:
-                if "Uncategorized" not in self.topic_tree.root:
-                    self.topic_tree.root["Uncategorized"] = Topic("Uncategorized", "Uncategorized")
-                self.topic_tree.root["Uncategorized"].bookmarks.append(bookmark)
+                self.logger.warning(f"Topic {bookmark.topic_id} not found for bookmark '{bookmark.title}'. Adding to Uncategorized.")
+                if -1 not in self.topic_tree.root:
+                    self.topic_tree.root[-1] = Topic(-1, "Uncategorized")
+                self.topic_tree.root[-1].bookmarks.append(bookmark)
+                #self.logger.debug(f"Appended bookmark '{bookmark.title}' to Uncategorized. Uncategorized now has {len(self.topic_tree.root[-1].bookmarks)} bookmarks.")
 
-    def _find_topic_by_id(self, tree: Dict[str, Topic], topic_id: str) -> Optional[Topic]:
+        self.logger.debug("Finished adding all bookmarks to the tree.")
+        self._log_tree_structure(self.topic_tree.root)
+
+    def _log_tree_structure(self, tree: Dict[int, Topic], level: int = 0):
+        for topic_id, topic in tree.items():
+            self.logger.debug(f"{'  ' * level}Topic: ID={topic_id}, Name='{topic.name}', Bookmarks={len(topic.bookmarks)}, Level={level}")
+            #for bookmark in topic.bookmarks:
+                #self.logger.debug(f"{'  ' * (level + 1)}Bookmark: ID={bookmark.id}, Title='{bookmark.title}'")
+            self._log_tree_structure(topic.subtopics, level + 1)
+
+
+    def _find_topic_by_id(self, tree: Dict[int, Topic], topic_id: int) -> Optional[Topic]:
         if topic_id in tree:
-            print("Found topic with id: ", topic_id)
             return tree[topic_id]
         
         for topic in tree.values():
             result = self._find_topic_by_id(topic.subtopics, topic_id)
             if result:
                 return result
-        print("No topic found with id: ", topic_id)
+        
         return None
 
+    def _create_tree_structure(self, hierarchical_topics: List[Dict[str, Any]]):
+        for topic in hierarchical_topics:
+            parent_id = int(topic['Parent_ID'])
+            parent_name = str(topic['Parent_Name'])
+            child_left_id = int(topic['Child_Left_ID'])
+            child_left_name = str(topic['Child_Left_Name'])
+            child_right_id = int(topic['Child_Right_ID'])
+            child_right_name = str(topic['Child_Right_Name'])
+
+            self.logger.debug(f"Creating topic: Parent ID: {parent_id}, Parent Name: {parent_name}, "
+                            f"Child Left: {child_left_id} ({child_left_name}), "
+                            f"Child Right: {child_right_id} ({child_right_name})")
+
+            # Ensure parent topic exists
+            if parent_id not in self.topic_tree.root:
+                self.topic_tree.root[parent_id] = Topic(parent_id, parent_name)
+
+            # Link left child to the parent
+            if child_left_id not in self.topic_tree.root[parent_id].subtopics:
+                self.topic_tree.root[parent_id].subtopics[child_left_id] = Topic(child_left_id, child_left_name)
+
+            # Link right child to the parent
+            if child_right_id not in self.topic_tree.root[parent_id].subtopics:
+                self.topic_tree.root[parent_id].subtopics[child_right_id] = Topic(child_right_id, child_right_name)
+
+
+
     def _convert_tree_to_dict(self, tree: Dict[str, Topic]) -> Dict[str, Any]:
-        return {
-            topic_id: {
+        result = {}
+        for topic_id, topic in tree.items():
+            bookmarks = [self._simplify_bookmark(b) for b in topic.bookmarks]
+            #self.logger.debug(f"Converting topic: ID={topic_id}, Name='{topic.name}', Bookmarks={len(bookmarks)}")
+            #self.logger.debug(f"First few bookmarks: {bookmarks[:5]}")  # Log first 5 bookmarks
+            
+            result[topic_id] = {
                 "id": topic.id,
                 "name": topic.name,
                 "subtopics": self._convert_tree_to_dict(topic.subtopics),
-                "bookmarks": [self._simplify_bookmark(b) for b in topic.bookmarks],
-                "bookmark_count": len(topic.bookmarks),
+                "bookmarks": bookmarks,
+                "bookmark_count": len(bookmarks),
                 "subtopic_count": len(topic.subtopics)
             }
-            for topic_id, topic in tree.items()
-        }
+            self.logger.debug(f"Converted topic result: ID={topic_id}, Bookmarks={len(result[topic_id]['bookmarks'])}, Subtopics={result[topic_id]['subtopic_count']}")
+        return result
+
+
 
     def _simplify_bookmark(self, bookmark: Bookmark) -> Dict[str, Any]:
         return {

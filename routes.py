@@ -2,6 +2,7 @@ from flask_restx import Namespace, Resource, Api
 from models import create_models
 from bookmark_organizer import BookmarkTopicTree
 from flask import request
+import logging
 
 ns_bookmarks = Namespace('bookmarks', description='Bookmark operations')
 ns_topics = Namespace('topics', description='Topic operations')
@@ -115,11 +116,30 @@ def setup_routes(api: Api, bookmark_organizer):
         @ns_topics.response(500, 'Internal Server Error')
         def get(self):
             """Get the bookmark topic tree"""
+            self.logger = logging.getLogger(__name__)
             try:
                 tree_builder = BookmarkTopicTree(bookmark_organizer)
                 topic_tree = tree_builder.build_tree()
-                return {"root": topic_tree}
+                
+                # Log the entire topic_tree
+                # elf.logger.debug(f"Full topic tree: {topic_tree}")
+                
+                # Check if the tree is empty
+                if not topic_tree:
+                    self.logger.warning("Topic tree is empty")
+                    return {"message": "Topic tree is empty"}, 204
+                
+                # Log the first topic and its bookmarks
+                #first_topic_id = next(iter(topic_tree))
+                #first_topic = topic_tree[first_topic_id]
+                # self.logger.debug(f"First topic: ID={first_topic_id}, Name='{first_topic['name']}', Bookmarks={first_topic['bookmark_count']}")
+                #if first_topic['bookmarks']:
+                    #self.logger.debug(f"First bookmark in first topic: {first_topic['bookmarks'][0]}")
+                
+                response = {"root": topic_tree}
+                return response
             except Exception as e:
+                self.logger.exception(f"Error in get_topic_tree: {str(e)}")
                 return {'message': 'An error occurred while building the topic tree', 'error': str(e)}, 500
 
     # Add namespaces to the API

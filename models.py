@@ -34,10 +34,12 @@ def create_models(api):
     })
 
     topic_in_tree = api.model('TopicInTree', {
-        'id': fields.String(description='Topic ID'),
+        'id': fields.Integer(description='Topic ID'),
         'name': fields.String(description='Topic name'),
-        'subtopics': fields.List(fields.Nested('TopicInTree'), description='List of subtopics'),
-        'bookmarks': fields.List(fields.Nested(bookmark_in_tree), description='List of bookmarks in this topic')
+        'subtopics': fields.Nested('TopicInTree', description='List of subtopics'),
+        'bookmarks': fields.List(fields.Nested(bookmark_in_tree), description='List of bookmarks in this topic'),
+        'bookmark_count': fields.Integer(description='Number of bookmarks in this topic'),
+        'subtopic_count': fields.Integer(description='Number of subtopics in this topic')
     })
 
     topic_tree = api.model('TopicTree', {
