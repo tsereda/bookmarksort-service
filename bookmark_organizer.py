@@ -55,6 +55,7 @@ class TopicModel(ABC):
 class BERTopicModel(TopicModel):
     def __init__(self):
         self.model = BERTopic()
+        self.logger = logging.getLogger(__name__)
 
     def fit(self, docs: List[str]):
         self.model.fit(docs)
@@ -64,6 +65,8 @@ class BERTopicModel(TopicModel):
 
     def get_hierarchical_topics(self, docs: List[str]) -> List[Dict[str, Any]]:
         hierarchical_topics = self.model.hierarchical_topics(docs)
+        tree = self.model.get_topic_tree(hierarchical_topics)
+        print("Tree: ", tree)
         return [
             {
                 "Parent_ID": str(topic.get('Parent_ID', '')),
@@ -198,7 +201,7 @@ class BookmarkTopicTree:
             hierarchical_topics = self.bookmark_organizer.get_hierarchical_topics()
             #self.logger.debug(f"Hierarchical topics: {hierarchical_topics}")
             bookmarks = self.bookmark_organizer.list_bookmarks()
-            self.logger.debug(f"Number of bookmarks: {len(bookmarks)}")
+            #self.logger.debug(f"Number of bookmarks: {len(bookmarks)}")
             #self.logger.debug(f"Bookmarks: {bookmarks}") 
             
             self._create_tree_structure(hierarchical_topics)

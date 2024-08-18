@@ -5,7 +5,7 @@ from bookmark_organizer import BookmarkOrganizer, DefaultEmbeddingModel, BERTopi
 from routes import setup_routes
 import logging
 
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 app = Flask(__name__)
 
