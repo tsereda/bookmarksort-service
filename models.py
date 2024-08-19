@@ -5,7 +5,6 @@ def create_models(api):
         'title': fields.String(required=True, description='The bookmark title'),
         'url': fields.String(required=True, description='The bookmark URL'),
         'tags': fields.List(fields.String, description='List of tags'),
-        'embedding': fields.List(fields.Float, description='Embedding vector'),
         'topic': fields.Integer(description='Topic ID', allow_null=True)
     })
 
@@ -13,37 +12,28 @@ def create_models(api):
         'id': fields.Integer(description='The bookmark ID')
     })
 
-    hierarchical_topic_model = api.model('HierarchicalTopic', {
-        'Parent_ID': fields.String(description='Parent topic ID'),
-        'Parent_Name': fields.String(description='Parent topic name'),
-        'Topics': fields.List(fields.Integer, description='List of child topic IDs'),
-        'Child_Left_ID': fields.String(description='Left child topic ID'),
-        'Child_Left_Name': fields.String(description='Left child topic name'),
-        'Child_Right_ID': fields.String(description='Right child topic ID'),
-        'Child_Right_Name': fields.String(description='Right child topic name'),
-        'Distance': fields.Float(description='Distance between child topics')
+    topic_word_model = api.model('TopicWord', {
+        'word': fields.String(description='Word in the topic'),
+        'score': fields.Float(description='Score of the word in the topic')
     })
 
+    topic_model = api.model('Topic', {
+        'id': fields.Integer(description='Topic ID'),
+        'name': fields.String(description='Topic name'),
+        'count': fields.Integer(description='Number of documents in the topic'),
+        'representation': fields.List(fields.Nested(topic_word_model), description='Top words and their scores for this topic')
+    })
 
-    bookmark_in_tree = api.model('BookmarkInTree', {
-        'id': fields.Integer(description='The bookmark ID'),
-        'title': fields.String(description='The bookmark title'),
-        'url': fields.String(description='The bookmark URL'),
-        'tags': fields.List(fields.String, description='List of tags'),
+    scatter_plot_point = api.model('ScatterPlotPoint', {
+        'id': fields.Integer(description='Bookmark ID'),
+        'x': fields.Float(description='X coordinate'),
+        'y': fields.Float(description='Y coordinate'),
         'topic': fields.Integer(description='Topic ID')
     })
 
-    topic_in_tree = api.model('TopicInTree', {
-        'id': fields.Integer(description='Topic ID'),
-        'name': fields.String(description='Topic name'),
-        'subtopics': fields.Nested('TopicInTree', description='List of subtopics'),
-        'bookmarks': fields.List(fields.Nested(bookmark_in_tree), description='List of bookmarks in this topic'),
-        'bookmark_count': fields.Integer(description='Number of bookmarks in this topic'),
-        'subtopic_count': fields.Integer(description='Number of subtopics in this topic')
+    embedding_request = api.model('EmbeddingRequest', {
+        'embedding_model': fields.String(description='Name of the embedding model to use',
+                                         example='all-MiniLM-L6-v2')
     })
 
-    topic_tree = api.model('TopicTree', {
-        'root': fields.Nested(topic_in_tree)
-    })
-
-    return bookmark_model, bookmark_response, hierarchical_topic_model, topic_tree
+    return bookmark_model, bookmark_response, topic_model, scatter_plot_point, embedding_request

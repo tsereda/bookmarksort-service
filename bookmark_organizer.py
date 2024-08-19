@@ -1,85 +1,11 @@
-# bookmark_organizer.py
-
 import sqlite3
 import numpy as np
-from typing import List, Dict, Any, Optional, Tuple, Union
-from abc import ABC, abstractmethod
+from typing import List, Dict, Any
 from bertopic import BERTopic
-import struct
-from collections import defaultdict
-import logging
-
-class EmbeddingModel(ABC):
-    @abstractmethod
-    def embed(self, text: str) -> np.ndarray:
-        pass
-
-class DefaultEmbeddingModel(EmbeddingModel):
-    def embed(self, text: str) -> np.ndarray:
-        # Implement a default embedding method
-        pass
-
-# Topic Tree Structure
-
-class Bookmark:
-    def __init__(self, id: int, title: str, url: str, topic_id: int):
-        self.id: int = id
-        self.title: str = title
-        self.url: str = url
-        self.topic_id: int = topic_id
-
-class Topic:
-    def __init__(self, id: int, name: str):
-        self.id: int = id
-        self.name: str = name
-        self.subtopics: Dict[int, 'Topic'] = {}
-        self.bookmarks: List[Bookmark] = []
-
-class TopicTree:
-    def __init__(self):
-        self.root: Dict[int, Topic] = {}
-
-class TopicModel(ABC):
-    @abstractmethod
-    def fit(self, docs: List[str]):
-        pass
-
-    @abstractmethod
-    def transform(self, docs: List[str]) -> List[int]:
-        pass
-
-    @abstractmethod
-    def get_hierarchical_topics(self, docs: List[str]) -> Dict[str, Any]:
-        pass
-
-class BERTopicModel(TopicModel):
-    def __init__(self):
-        self.model = BERTopic()
-        self.logger = logging.getLogger(__name__)
-
-    def fit(self, docs: List[str]):
-        self.model.fit(docs)
-
-    def transform(self, docs: List[str]) -> List[int]:
-        return self.model.transform(docs)[0]
-
-    def get_hierarchical_topics(self, docs: List[str]) -> List[Dict[str, Any]]:
-        hierarchical_topics = self.model.hierarchical_topics(docs)
-        tree = self.model.get_topic_tree(hierarchical_topics)
-        print("Tree: ", tree)
-        return [
-            {
-                "Parent_ID": str(topic.get('Parent_ID', '')),
-                "Parent_Name": str(topic.get('Parent_Name', '')),
-                "Topics": [str(t) for t in topic.get('Topics', [])],
-                "Child_Left_ID": str(topic.get('Child_Left_ID', '')),
-                "Child_Left_Name": str(topic.get('Child_Left_Name', '')),
-                "Child_Right_ID": str(topic.get('Child_Right_ID', '')),
-                "Child_Right_Name": str(topic.get('Child_Right_Name', '')),
-                "Distance": float(topic.get('Distance', 0.0))
-            }
-            for topic in hierarchical_topics.to_dict(orient='records')
-        ]
+import pandas as pd
+from umap import UMAP
+from sentence_transformers import SentenceTransformer
+from scipy.cluster import hierarchy as sch
 
 class BookmarkDatabase:
     def __init__(self, db_name: str = "bookmarks.db"):
@@ -96,6 +22,9 @@ class BookmarkDatabase:
                           tags TEXT,
                           embedding BLOB,
                           topic INTEGER)''')
+            c.execute('''CREATE TABLE IF NOT EXISTS metadata
+                         (key TEXT PRIMARY KEY,
+                          value TEXT)''')
             conn.commit()
 
     def add_bookmark(self, bookmark: Dict[str, Any]) -> int:
@@ -108,8 +37,8 @@ class BookmarkDatabase:
                 bookmark['title'],
                 bookmark['url'],
                 ','.join(bookmark.get('tags', [])),
-                np.array(bookmark.get('embedding', [])).tobytes(),
-                int(bookmark.get('topic'))  # Ensure topic is stored as an integer
+                bookmark.get('embedding', None),
+                int(bookmark.get('topic', -1))
             ))
             return c.lastrowid
 
@@ -117,215 +46,230 @@ class BookmarkDatabase:
         with sqlite3.connect(self.db_name) as conn:
             c = conn.cursor()
             c.execute("SELECT id, title, url, tags, topic FROM bookmarks")
-            return [{"id": row[0], "title": row[1], "url": row[2],
-                    "tags": row[3].split(',') if row[3] else [], 
-                    "topic": int(row[4]) if row[4] is not None else None}
-                    for row in c.fetchall()]
+            bookmarks = []
+            for row in c.fetchall():
+                bookmark = {
+                    'id': row[0],
+                    'title': row[1],
+                    'url': row[2],
+                    'tags': row[3].split(',') if row[3] else [],
+                    'topic': row[4]
+                }
+                bookmarks.append(bookmark)
+            return bookmarks
 
-    def get_bookmark_texts(self) -> List[str]:
-        with sqlite3.connect(self.db_name) as conn:
-            c = conn.cursor()
-            c.execute("SELECT title FROM bookmarks")
-            return [row[0] for row in c.fetchall()]
-        
     def update_bookmark_topic(self, bookmark_id: int, topic: int):
         with sqlite3.connect(self.db_name) as conn:
             c = conn.cursor()
             c.execute("UPDATE bookmarks SET topic = ? WHERE id = ?", (topic, bookmark_id))
             conn.commit()
 
-    def get_all_bookmark_ids_and_texts(self) -> List[Tuple[int, str]]:
+    def update_bookmark_embedding(self, bookmark_id: int, embedding: np.ndarray):
         with sqlite3.connect(self.db_name) as conn:
             c = conn.cursor()
-            c.execute("SELECT id, title FROM bookmarks")
-            return c.fetchall()
+            c.execute("UPDATE bookmarks SET embedding = ? WHERE id = ?", (embedding.tobytes(), bookmark_id))
+            conn.commit()
 
+    def get_embeddings(self) -> np.ndarray:
+        with sqlite3.connect(self.db_name) as conn:
+            c = conn.cursor()
+            c.execute("SELECT embedding FROM bookmarks WHERE embedding IS NOT NULL")
+            embeddings = [np.frombuffer(row[0], dtype=np.float32) for row in c.fetchall()]
+            return np.array(embeddings)
+
+    def set_metadata(self, key: str, value: str):
+        with sqlite3.connect(self.db_name) as conn:
+            c = conn.cursor()
+            c.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)", (key, value))
+            conn.commit()
+
+    def get_metadata(self, key: str) -> str:
+        with sqlite3.connect(self.db_name) as conn:
+            c = conn.cursor()
+            c.execute("SELECT value FROM metadata WHERE key = ?", (key,))
+            result = c.fetchone()
+            return result[0] if result else None
 class BookmarkOrganizer:
-    def __init__(self, 
-                 embedding_model: Optional[EmbeddingModel] = None,
-                 topic_model: Optional[TopicModel] = None,
-                 database: Optional[BookmarkDatabase] = None):
-        self.embedding_model = embedding_model or DefaultEmbeddingModel()
-        self.topic_model = topic_model or BERTopicModel()
-        self.database = database or BookmarkDatabase()
-        self.logger = logging.getLogger(__name__)
+    def __init__(self, database: BookmarkDatabase):
+        self.database = database
+        self.topic_model = None
+        self.umap_model = UMAP(n_neighbors=15, n_components=2, min_dist=0.0, metric='cosine')
+        self.hierarchical_topics = None
 
-    def add_bookmark(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        if 'embedding' not in data:
-            data['embedding'] = self.embedding_model.embed(data['title'])
+    def generate_embeddings(self, embedding_model: str = "all-MiniLM-L6-v2"):
+        current_model = self.database.get_metadata('embedding_model')
+        if current_model == embedding_model:
+            return {"message": "Embeddings are up to date"}
+
+        bookmarks = self.database.get_bookmarks()
+        if not bookmarks:
+            return {"message": "No bookmarks found. Add some bookmarks first."}
+
+        embedding_model = SentenceTransformer(embedding_model)
+        docs = [f"{b['title']} {b['url']}" for b in bookmarks]
+        embeddings = embedding_model.encode(docs)
+
+        for bookmark, embedding in zip(bookmarks, embeddings):
+            self.database.update_bookmark_embedding(bookmark['id'], embedding)
+
+        self.database.set_metadata('embedding_model', embedding_model.get_sentence_embedding_dimension())
+        return {"message": f"Generated embeddings for {len(bookmarks)} bookmarks using {embedding_model}"}
+
+    def get_topic_representation(self, topic_id: int):
+        if self.topic_model is None:
+            raise ValueError("Topics have not been created. Call create_topics() first.")
         
-        bookmark_id = self.database.add_bookmark(data)
-        return {**data, "id": bookmark_id}
+        topic_words = self.topic_model.get_topic(topic_id)
+        if not topic_words:
+            return None
+        
+        return {
+            'id': topic_id,
+            'name': f"Topic {topic_id}",
+            'count': len(topic_words),
+            'representation': [{'word': word, 'score': score} for word, score in topic_words]
+        }
 
-    def list_bookmarks(self) -> List[Dict[str, Any]]:
+    def get_scatter_plot_data(self):
+        if self.topic_model is None:
+            raise ValueError("Topics have not been created. Call create_topics() first.")
+        
+        embeddings = self.database.get_embeddings()
+        if embeddings.size == 0:
+            raise ValueError("No embeddings found. Generate embeddings first.")
+        
+        reduced_embeddings = self.umap_model.fit_transform(embeddings)
+        
+        bookmarks = self.database.get_bookmarks()
+        scatter_data = []
+        
+        for i, bookmark in enumerate(bookmarks):
+            scatter_data.append({
+                'id': bookmark['id'],
+                'x': float(reduced_embeddings[i, 0]),
+                'y': float(reduced_embeddings[i, 1]),
+                'topic': int(bookmark['topic'])
+            })
+        
+        return scatter_data
+
+    def create_topics(self):
+        bookmarks = self.database.get_bookmarks()
+        if not bookmarks:
+            return {"message": "No bookmarks found. Add some bookmarks first."}
+
+        # Check if embeddings exist and are up-to-date
+        current_model = self.database.get_metadata('embedding_model')
+        if not current_model or current_model != "all-MiniLM-L6-v2":
+            self.generate_embeddings()
+
+        embeddings = self.database.get_embeddings()
+        if embeddings.size == 0:
+            return {"message": "Failed to generate embeddings. Please try again."}
+
+        docs = [f"{b['title']} {b['url']}" for b in bookmarks]
+
+        try:
+            self.topic_model = BERTopic(embedding_model=None)
+            topics, _ = self.topic_model.fit_transform(docs, embeddings=embeddings)
+            
+            for bookmark, topic in zip(bookmarks, topics):
+                self.database.update_bookmark_topic(bookmark['id'], int(topic))
+            
+            # Create hierarchical topics
+            self.hierarchical_topics = self.create_hierarchical_topics(docs)
+            
+            return {"message": f"Created topics for {len(bookmarks)} bookmarks"}
+        except Exception as e:
+            return {"message": f"An error occurred while creating topics: {str(e)}"}
+
+    def create_hierarchical_topics(self, docs):
+        try:
+            linkage_function = lambda x: sch.linkage(x, 'ward', optimal_ordering=True)
+            hierarchical_topics = self.topic_model.hierarchical_topics(docs, linkage_function=linkage_function)
+            return hierarchical_topics
+        except Exception as e:
+            raise ValueError(f"Error creating hierarchical topics: {str(e)}")
+
+    def get_topic_tree(self):
+        if self.topic_model is None or self.hierarchical_topics is None:
+            raise ValueError("Topics have not been created. Call create_topics() first.")
+        
+        hier_topics = self.hierarchical_topics
+        tree = self.topic_model.get_topic_tree(hier_topics)
+        return tree
+    
+    def get_bookmarks(self) -> List[Dict[str, Any]]:
         return self.database.get_bookmarks()
 
-    def get_hierarchical_topics(self) -> List[Dict[str, Any]]:
-        docs = self.database.get_bookmark_texts()
-        if not docs:
-            return []
-
-        try:
-            return self.topic_model.get_hierarchical_topics(docs)
-        except Exception as e:
-            self.logger.exception(f"An error occurred while generating hierarchical topics: {str(e)}")
-            return []
-
-    def update_topics(self):
-        bookmarks = self.database.get_all_bookmark_ids_and_texts()
-        if not bookmarks:
-            return {"message": "No bookmarks found"}
-
-        bookmark_ids, docs = zip(*bookmarks)
+    def get_tree_json(self):
+        if self.hierarchical_topics is None:
+            raise ValueError("Hierarchical topics have not been created. Call create_topics() first.")
         
-        # Fit the topic model
-        self.topic_model.fit(docs)
+        hier_topics = self.hierarchical_topics
+        root = {
+            "name": "Topics",
+            "children": []
+        }
+
+        def add_children(node, parent_id):
+            children = hier_topics[
+                (hier_topics['Parent_ID'] == parent_id) &
+                (hier_topics['Child_Left_ID'] != hier_topics['Child_Right_ID'])
+            ]
+            for _, row in children.iterrows():
+                left_child = {
+                    "name": row['Child_Left_Name'],
+                    "children": []
+                }
+                right_child = {
+                    "name": row['Child_Right_Name'],
+                    "children": []
+                }
+                node["children"].extend([left_child, right_child])
+                add_children(left_child, row['Child_Left_ID'])
+                add_children(right_child, row['Child_Right_ID'])
+
+        add_children(root, hier_topics['Parent_ID'].max())
+        return root
+
+    def get_sunburst_data(self):
+        if self.hierarchical_topics is None:
+            raise ValueError("Hierarchical topics have not been created. Call create_topics() first.")
         
-        # Transform the documents to get their topics
-        topics = self.topic_model.transform(docs)
+        tree_json = self.get_tree_json()
         
-        # Update topics in the database
-        for bookmark_id, topic in zip(bookmark_ids, topics):
-            self.database.update_bookmark_topic(bookmark_id, int(topic))
-
-        return {"message": f"Updated topics for {len(bookmarks)} bookmarks"}
-
-class BookmarkTopicTree:
-    def __init__(self, bookmark_organizer):
-        self.bookmark_organizer = bookmark_organizer
-        self.logger = logging.getLogger(__name__)
-        self.topic_tree = TopicTree()
-
-    def build_tree(self) -> Dict[str, Any]:
-        try:
-            hierarchical_topics = self.bookmark_organizer.get_hierarchical_topics()
-            #self.logger.debug(f"Hierarchical topics: {hierarchical_topics}")
-            bookmarks = self.bookmark_organizer.list_bookmarks()
-            #self.logger.debug(f"Number of bookmarks: {len(bookmarks)}")
-            #self.logger.debug(f"Bookmarks: {bookmarks}") 
-            
-            self._create_tree_structure(hierarchical_topics)
-            self._add_bookmarks_to_tree(bookmarks)
-            
-            return self._convert_tree_to_dict(self.topic_tree.root)
-        except Exception as e:
-            self.logger.exception(f"Error building topic tree: {str(e)}")
-            return {"error": f"An error occurred while building the topic tree: {str(e)}"}
-
-    def _add_bookmarks_to_tree(self, bookmarks: List[Dict[str, Any]]):
-        for bookmark_data in bookmarks:
-            bookmark = Bookmark(
-                id=bookmark_data['id'],
-                title=bookmark_data['title'],
-                url=bookmark_data['url'],
-                topic_id=bookmark_data['topic'] if bookmark_data['topic'] is not None else -1
-            )
-
-            #self.logger.debug(f"Processing bookmark: ID={bookmark.id}, Title='{bookmark.title}', Topic ID={bookmark.topic_id}")
-
-            topic = self._find_topic_by_id(self.topic_tree.root, bookmark.topic_id)
-            if topic:
-                #self.logger.debug(f"Found topic for bookmark: Topic ID={topic.id}, Topic Name='{topic.name}'")
-                topic.bookmarks.append(bookmark)
-                #self.logger.debug(f"Appended bookmark '{bookmark.title}' to topic '{topic.name}'. Topic now has {len(topic.bookmarks)} bookmarks.")
+        def add_values(node):
+            if not node["children"]:
+                node["value"] = 1
             else:
-                self.logger.warning(f"Topic {bookmark.topic_id} not found for bookmark '{bookmark.title}'. Adding to Uncategorized.")
-                if -1 not in self.topic_tree.root:
-                    self.topic_tree.root[-1] = Topic(-1, "Uncategorized")
-                self.topic_tree.root[-1].bookmarks.append(bookmark)
-                #self.logger.debug(f"Appended bookmark '{bookmark.title}' to Uncategorized. Uncategorized now has {len(self.topic_tree.root[-1].bookmarks)} bookmarks.")
-
-        self.logger.debug("Finished adding all bookmarks to the tree.")
-        self._log_tree_structure(self.topic_tree.root)
-
-    def _log_tree_structure(self, tree: Dict[int, Topic], level: int = 0):
-        for topic_id, topic in tree.items():
-            self.logger.debug(f"{'  ' * level}Topic: ID={topic_id}, Name='{topic.name}', Bookmarks={len(topic.bookmarks)}, Level={level}")
-            #for bookmark in topic.bookmarks:
-                #self.logger.debug(f"{'  ' * (level + 1)}Bookmark: ID={bookmark.id}, Title='{bookmark.title}'")
-            self._log_tree_structure(topic.subtopics, level + 1)
-
-
-    def _find_topic_by_id(self, tree: Dict[int, Topic], topic_id: int) -> Optional[Topic]:
-        if topic_id in tree:
-            return tree[topic_id]
+                for child in node["children"]:
+                    add_values(child)
+                node["value"] = sum(child["value"] for child in node["children"])
         
-        for topic in tree.values():
-            result = self._find_topic_by_id(topic.subtopics, topic_id)
-            if result:
-                return result
+        add_values(tree_json)
+        return tree_json
+
+    def add_bookmark(self, bookmark_data: Dict[str, Any]) -> Dict[str, Any]:
+        bookmark_id = self.database.add_bookmark(bookmark_data)
         
-        return None
+        if self.topic_model is not None:
+            new_topic = self._assign_topic_to_bookmark(bookmark_data)
+            self.database.update_bookmark_topic(bookmark_id, new_topic)
+        
+        return {"message": "Bookmark added successfully", "id": bookmark_id}
 
-    def _create_tree_structure(self, hierarchical_topics: List[Dict[str, Any]]):
-        for topic in hierarchical_topics:
-            parent_id = int(topic['Parent_ID'])
-            parent_name = str(topic['Parent_Name'])
-            child_left_id = int(topic['Child_Left_ID'])
-            child_left_name = str(topic['Child_Left_Name'])
-            child_right_id = int(topic['Child_Right_ID'])
-            child_right_name = str(topic['Child_Right_Name'])
+    def _assign_topic_to_bookmark(self, bookmark_data: Dict[str, Any]) -> int:
+        doc = f"{bookmark_data['title']} {bookmark_data['url']}"
+        embedding_model = SentenceTransformer(self.database.get_metadata('embedding_model'))
+        embedding = embedding_model.encode([doc])[0]
+        topic, _ = self.topic_model.transform([doc], embeddings=[embedding])
+        return topic[0]
 
-            self.logger.debug(f"Creating topic: Parent ID: {parent_id}, Parent Name: {parent_name}, "
-                            f"Child Left: {child_left_id} ({child_left_name}), "
-                            f"Child Right: {child_right_id} ({child_right_name})")
+    def search_bookmarks(self, query: str) -> List[Dict[str, Any]]:
+        bookmarks = self.database.get_bookmarks()
+        return [b for b in bookmarks if query.lower() in b['title'].lower() or query.lower() in b['url'].lower()]
 
-            # Ensure parent topic exists
-            if parent_id not in self.topic_tree.root:
-                self.topic_tree.root[parent_id] = Topic(parent_id, parent_name)
-
-            # Link left child to the parent
-            if child_left_id not in self.topic_tree.root[parent_id].subtopics:
-                self.topic_tree.root[parent_id].subtopics[child_left_id] = Topic(child_left_id, child_left_name)
-
-            # Link right child to the parent
-            if child_right_id not in self.topic_tree.root[parent_id].subtopics:
-                self.topic_tree.root[parent_id].subtopics[child_right_id] = Topic(child_right_id, child_right_name)
-
-
-
-    def _convert_tree_to_dict(self, tree: Dict[str, Topic]) -> Dict[str, Any]:
-        result = {}
-        for topic_id, topic in tree.items():
-            bookmarks = [self._simplify_bookmark(b) for b in topic.bookmarks]
-            #self.logger.debug(f"Converting topic: ID={topic_id}, Name='{topic.name}', Bookmarks={len(bookmarks)}")
-            #self.logger.debug(f"First few bookmarks: {bookmarks[:5]}")  # Log first 5 bookmarks
-            
-            result[topic_id] = {
-                "id": topic.id,
-                "name": topic.name,
-                "subtopics": self._convert_tree_to_dict(topic.subtopics),
-                "bookmarks": bookmarks,
-                "bookmark_count": len(bookmarks),
-                "subtopic_count": len(topic.subtopics)
-            }
-            self.logger.debug(f"Converted topic result: ID={topic_id}, Bookmarks={len(result[topic_id]['bookmarks'])}, Subtopics={result[topic_id]['subtopic_count']}")
-        return result
-
-
-
-    def _simplify_bookmark(self, bookmark: Bookmark) -> Dict[str, Any]:
-        return {
-            "id": bookmark.id,
-            "title": bookmark.title,
-            "url": bookmark.url,
-            "tags": []
-        }
-
-    def _generate_meta_info(self) -> Dict[str, int]:
-        return {
-            "total_topics": self._count_topics(self.topic_tree.root),
-            "total_bookmarks": self._count_bookmarks(self.topic_tree.root),
-            "max_depth": self._get_max_depth(self.topic_tree.root)
-        }
-
-    def _count_topics(self, tree: Dict[str, Topic]) -> int:
-        return len(tree) + sum(self._count_topics(topic.subtopics) for topic in tree.values())
-
-    def _count_bookmarks(self, tree: Dict[str, Topic]) -> int:
-        return sum(len(topic.bookmarks) + self._count_bookmarks(topic.subtopics) for topic in tree.values())
-
-    def _get_max_depth(self, tree: Dict[str, Topic]) -> int:
-        if not tree:
-            return 0
-        return 1 + max((self._get_max_depth(topic.subtopics) for topic in tree.values()), default=0)
+# Initialize components
+database = BookmarkDatabase()
+bookmark_organizer = BookmarkOrganizer(database)

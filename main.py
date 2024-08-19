@@ -1,7 +1,7 @@
 from flask import Flask
 from flask_cors import CORS
 from flask_restx import Api
-from bookmark_organizer import BookmarkOrganizer, DefaultEmbeddingModel, BERTopicModel, BookmarkDatabase
+from bookmark_organizer import BookmarkOrganizer, BookmarkDatabase
 from routes import setup_routes
 import logging
 
@@ -18,18 +18,13 @@ CORS(app, resources={r"/*": {
 
 api = Api(app, version='1.0', title='Bookmark Organizer API',
           description='A sophisticated Bookmark Organizer API with topic modeling capabilities')
+          
 
 # Initialize components
-embedding_model = DefaultEmbeddingModel()
-topic_model = BERTopicModel()
 database = BookmarkDatabase()
 
 # Create BookmarkOrganizer instance
-bookmark_organizer = BookmarkOrganizer(
-    embedding_model=embedding_model,
-    topic_model=topic_model,
-    database=database
-)
+bookmark_organizer = BookmarkOrganizer(database)
 
 # Setup routes
 setup_routes(api, bookmark_organizer)
