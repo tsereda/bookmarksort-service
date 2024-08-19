@@ -207,10 +207,23 @@ class BookmarkOrganizer:
             raise ValueError("Hierarchical topics have not been created. Call create_topics() first.")
         
         hier_topics = self.hierarchical_topics
-        root = {
-            "name": "Topics",
-            "children": []
-        }
+        root = {"name": "Topics", "children": []}
+
+        def build_tree(node, parent_id):
+            children = hier_topics[
+                (hier_topics['Parent_ID'] == parent_id) &
+                (hier_topics['Child_Left_ID'] != hier_topics['Child_Right_ID'])
+            ]
+            for _, row in children.iterrows():
+                left_child = {"name": row['Child_Left_Name'], "children": []}
+                right_child = {"name": row['Child_Right_Name'], "children": []}
+                node["children"].extend([left_child, right_child])
+                build_tree(left_child, row['Child_Left_ID'])
+                build_tree(right_child, row['Child_Right_ID'])
+
+        build_tree(root, hier_topics['Parent_ID'].max())
+        return root
+
 
         def add_children(node, parent_id):
             children = hier_topics[
