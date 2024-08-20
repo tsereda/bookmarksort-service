@@ -67,6 +67,28 @@ def setup_routes(api: Api, bookmark_organizer):
             except Exception as e:
                 return {'message': 'An error occurred while creating topics', 'error': str(e)}, 500
 
+    @ns_bookmarks.route('/embeddings')
+    class BookmarkEmbeddings(Resource):
+        @ns_bookmarks.doc('generate_embeddings',
+            description='Generate embeddings for all bookmarks.',
+            responses={
+                200: 'Embeddings generated successfully.',
+                400: 'Bad request. Invalid embedding model.',
+                500: 'Server error. An error occurred while generating embeddings.'
+            })
+        @ns_bookmarks.expect(embedding_request)
+        def post(self):
+            """Generate embeddings for all bookmarks"""
+            try:
+                data = request.json
+                embedding_model = data.get('embedding_model', 'all-MiniLM-L6-v2')
+                result = bookmark_organizer.generate_embeddings(embedding_model)
+                return result, 200
+            except ValueError as e:
+                return {'message': str(e)}, 400
+            except Exception as e:
+                return {'message': 'An error occurred while generating embeddings', 'error': str(e)}, 500
+
     @ns_topics.route('/<int:topic_id>')
     class Topic(Resource):
         @ns_topics.doc('get_topic',

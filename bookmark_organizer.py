@@ -133,7 +133,7 @@ class BookmarkOrganizer:
             return {"message": "No bookmarks found. Add some bookmarks first."}
 
         embedding_model = SentenceTransformer(embedding_model)
-        docs = [f"{b['title']} {b['url']}" for b in bookmarks]
+        docs = [f"{b['title']} {b['url']} {' '.join(b['tags'])}" for b in bookmarks]
         embeddings = embedding_model.encode(docs)
 
         for bookmark, embedding in zip(bookmarks, embeddings):
@@ -273,10 +273,12 @@ class BookmarkOrganizer:
         if embeddings.size == 0:
             return {"message": "Failed to generate embeddings. Please try again."}
 
-        docs = [f"{b['title']} {b['url']}" for b in bookmarks]
+        docs = [f"{b['title']} {b['url']} {' '.join(b['tags'])}" for b in bookmarks]
 
         try:
-            self.topic_model = BERTopic(embedding_model=None)
+            if self.topic_model is None:
+                self.topic_model = BERTopic(embedding_model=None)
+            
             topics, _ = self.topic_model.fit_transform(docs, embeddings=embeddings)
             
             for bookmark, topic in zip(bookmarks, topics):
@@ -288,7 +290,7 @@ class BookmarkOrganizer:
             return {"message": f"Created topics for {len(bookmarks)} bookmarks"}
         except Exception as e:
             return {"message": f"An error occurred while creating topics: {str(e)}"}
-
+    
     def create_hierarchical_topics(self, docs):
         try:
             linkage_function = lambda x: sch.linkage(x, 'ward', optimal_ordering=True)
@@ -357,7 +359,7 @@ class BookmarkOrganizer:
         return {"message": "Bookmark added successfully", "id": bookmark_id}
 
     def _assign_topic_to_bookmark(self, bookmark_data: Dict[str, Any]) -> int:
-        doc = f"{bookmark_data['title']} {bookmark_data['url']}"
+        doc = f"{bookmark_data['title']} {bookmark_data['url']} {' '.join(bookmark_data.get('tags', []))}"
         embedding_model = SentenceTransformer(self.database.get_metadata('embedding_model'))
         embedding = embedding_model.encode([doc])[0]
         topic, _ = self.topic_model.transform([doc], embeddings=[embedding])
