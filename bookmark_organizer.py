@@ -6,6 +6,9 @@ import pandas as pd
 from umap import UMAP
 from sentence_transformers import SentenceTransformer
 from scipy.cluster import hierarchy as sch
+from openai import OpenAI, AsyncOpenAI
+import json
+import asyncio
 
 class BookmarkDatabase:
     def __init__(self, db_name: str = "bookmarks.db"):
@@ -57,6 +60,28 @@ class BookmarkDatabase:
                 }
                 bookmarks.append(bookmark)
             return bookmarks
+        
+    def get_untagged_bookmarks(self, limit: int = None) -> List[Dict[str, Any]]:
+        with sqlite3.connect(self.db_name) as conn:
+            c = conn.cursor()
+            query = """
+                SELECT id, title, url FROM bookmarks
+                WHERE tags IS NULL OR tags = ''
+            """
+            if limit:
+                query += f" LIMIT {limit}"
+            c.execute(query)
+            return [{'id': row[0], 'title': row[1], 'url': row[2]} for row in c.fetchall()]
+
+    def update_bookmark_tags(self, bookmark_id: int, tags: List[str]):
+        with sqlite3.connect(self.db_name) as conn:
+            c = conn.cursor()
+            c.execute("""
+                UPDATE bookmarks
+                SET tags = ?
+                WHERE id = ?
+            """, (','.join(tags), bookmark_id))
+            conn.commit()
 
     def update_bookmark_topic(self, bookmark_id: int, topic: int):
         with sqlite3.connect(self.db_name) as conn:
@@ -89,12 +114,14 @@ class BookmarkDatabase:
             c.execute("SELECT value FROM metadata WHERE key = ?", (key,))
             result = c.fetchone()
             return result[0] if result else None
+
 class BookmarkOrganizer:
     def __init__(self, database: BookmarkDatabase):
         self.database = database
         self.topic_model = None
         self.umap_model = UMAP(n_neighbors=15, n_components=2, min_dist=0.0, metric='cosine')
         self.hierarchical_topics = None
+        self.client = AsyncOpenAI()
 
     def generate_embeddings(self, embedding_model: str = "all-MiniLM-L6-v2"):
         current_model = self.database.get_metadata('embedding_model')
@@ -129,6 +156,85 @@ class BookmarkOrganizer:
             'count': len(topic_words),
             'representation': [{'word': word, 'score': score} for word, score in topic_words]
         }
+    
+    async def batch_tag_bookmarks(self, bookmarks: List[Dict[str, Any]], max_tags: int = 10) -> Dict[str, Any]:
+        if not bookmarks:
+            return {"message": "No bookmarks to tag", "tagged_count": 0}
+
+        tags = await self._generate_tags_for_bookmarks(bookmarks, max_tags)
+        tagged_count = 0
+        for bookmark, bookmark_tags in zip(bookmarks, tags):
+            self.database.update_bookmark_tags(bookmark['id'], bookmark_tags)
+            tagged_count += 1
+
+        return {
+            "message": f"Tagged {tagged_count} bookmarks",
+            "tagged_count": tagged_count
+        }
+
+    async def batch_tag_all_untagged_bookmarks(self, max_concurrent: int = 5, max_tags: int = 10, batch_size: int = 20) -> Dict[str, Any]:
+        untagged_bookmarks = self.database.get_untagged_bookmarks()
+        
+        if not untagged_bookmarks:
+            return {"message": "No untagged bookmarks found"}
+
+        total_bookmarks = len(untagged_bookmarks)
+        tagged_count = 0
+        progress_updates = []
+
+        async def process_batch(batch):
+            nonlocal tagged_count
+            try:
+                result = await self.batch_tag_bookmarks(batch, max_tags)
+                tagged_count += result['tagged_count']
+                progress = (tagged_count / total_bookmarks) * 100
+                return f"Progress: {progress:.2f}% - Tagged {tagged_count} out of {total_bookmarks} bookmarks"
+            except Exception as e:
+                return f"Error tagging batch: {str(e)}"
+
+        semaphore = asyncio.Semaphore(max_concurrent)
+        async def process_with_semaphore(batch):
+            async with semaphore:
+                return await process_batch(batch)
+
+        batches = [untagged_bookmarks[i:i+batch_size] for i in range(0, total_bookmarks, batch_size)]
+        results = await asyncio.gather(*[process_with_semaphore(batch) for batch in batches])
+        progress_updates.extend(results)
+
+        return {
+            "message": f"Tagged {tagged_count} out of {total_bookmarks} bookmarks",
+            "progress_updates": progress_updates
+        }
+
+    async def _generate_tags_for_bookmarks(self, bookmarks: List[Dict[str, Any]], max_tags: int) -> List[List[str]]:
+        bookmarks_json = json.dumps([{'title': b['title'], 'url': b['url']} for b in bookmarks])
+        prompt = f"""Generate up to {max_tags} relevant tags for each of the following bookmarks. 
+        Respond with a JSON array where each element is an array of tags for the corresponding bookmark.
+        Bookmarks: {bookmarks_json}"""
+        
+        try:
+            response = await self.client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant that generates relevant tags for bookmarks."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=1000,
+                n=1,
+                stop=None,
+                temperature=0.5
+            )
+            
+            tags_json = response.choices[0].message.content.strip()
+            tags_list = json.loads(tags_json)
+            
+            if len(tags_list) != len(bookmarks):
+                raise ValueError("Mismatch between number of bookmarks and generated tag lists")
+            
+            return [tag_list[:max_tags] for tag_list in tags_list]
+        except Exception as e:
+            print(f"Error generating tags: {str(e)}")
+            return [[] for _ in bookmarks]  # Return empty tag lists on error
 
     def get_scatter_plot_data(self):
         if self.topic_model is None:
@@ -222,28 +328,6 @@ class BookmarkOrganizer:
                 build_tree(right_child, row['Child_Right_ID'])
 
         build_tree(root, hier_topics['Parent_ID'].max())
-        return root
-
-
-        def add_children(node, parent_id):
-            children = hier_topics[
-                (hier_topics['Parent_ID'] == parent_id) &
-                (hier_topics['Child_Left_ID'] != hier_topics['Child_Right_ID'])
-            ]
-            for _, row in children.iterrows():
-                left_child = {
-                    "name": row['Child_Left_Name'],
-                    "children": []
-                }
-                right_child = {
-                    "name": row['Child_Right_Name'],
-                    "children": []
-                }
-                node["children"].extend([left_child, right_child])
-                add_children(left_child, row['Child_Left_ID'])
-                add_children(right_child, row['Child_Right_ID'])
-
-        add_children(root, hier_topics['Parent_ID'].max())
         return root
 
     def get_sunburst_data(self):

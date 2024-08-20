@@ -1,14 +1,15 @@
 from flask import request, jsonify
 from flask_restx import Namespace, Resource, Api
 from models import create_models
-
-# Define namespaces
-ns_bookmarks = Namespace('bookmarks', description='Bookmark operations')
-ns_topics = Namespace('topics', description='Topic operations')
-ns_visualization = Namespace('visualization', description='Visualization operations')
-ns_search = Namespace('search', description='Search operations')
+import asyncio
 
 def setup_routes(api: Api, bookmark_organizer):
+    # Define namespaces
+    ns_bookmarks = Namespace('bookmarks', description='Bookmark operations')
+    ns_topics = Namespace('topics', description='Topic operations')
+    ns_visualization = Namespace('visualization', description='Visualization operations')
+    ns_search = Namespace('search', description='Search operations')
+
     bookmark_model, bookmark_response, topic_model, scatter_plot_point, embedding_request = create_models(api)
 
     @ns_bookmarks.route('/')
@@ -30,7 +31,6 @@ def setup_routes(api: Api, bookmark_organizer):
             except Exception as e:
                 ns_bookmarks.logger.error(f"Error fetching bookmarks: {str(e)}")
                 return {'message': 'An error occurred while fetching bookmarks', 'error': str(e)}, 500
-
 
         @ns_bookmarks.doc('add_bookmark',
             description='Add a new bookmark to the database.',
@@ -92,66 +92,101 @@ def setup_routes(api: Api, bookmark_organizer):
                 ns_topics.logger.error(f"Error fetching topic: {str(e)}")
                 return {'message': f'An error occurred while fetching the topic: {str(e)}'}, 500
 
-    @ns_visualization.route('/scatter_plot')
-    class ScatterPlotVisualization(Resource):
-        @ns_visualization.doc('get_scatter_plot_data',
-            description='Get data for scatter plot visualization of bookmarks and their topics.',
+    @ns_bookmarks.route('/batch_tag')
+    class BatchTagBookmarks(Resource):
+        @ns_bookmarks.doc('batch_tag_bookmarks',
+            description='Tag all untagged bookmarks concurrently with progress updates.',
             responses={
-                200: 'Success. Returns scatter plot data.',
-                400: 'Bad request. Topics may not have been created.',
-                500: 'Server error. An error occurred while fetching scatter plot data.'
+                200: 'Batch tagging process completed successfully.',
+                400: 'Bad request. Invalid parameters.',
+                500: 'Server error. An error occurred while batch tagging bookmarks.'
             })
-        def get(self):
-            """Get data for scatter plot visualization"""
+        def post(self):
+            """Tag all untagged bookmarks concurrently with progress updates"""
             try:
-                scatter_data = bookmark_organizer.get_scatter_plot_data()
-                return jsonify(scatter_data)
-            except ValueError as e:
-                ns_visualization.logger.error(f"Error fetching scatter plot data: {str(e)}")
-                return {'message': str(e)}, 400
-            except Exception as e:
-                ns_visualization.logger.error(f"Error fetching scatter plot data: {str(e)}")
-                return {'message': f'An error occurred while fetching scatter plot data: {str(e)}'}, 500
+                if request.is_json:
+                    data = request.get_json()
+                elif request.form:
+                    data = request.form
+                else:
+                    data = {}
 
+                max_concurrent = int(data.get('max_concurrent', 5))
+                max_tags = int(data.get('max_tags', 10))
+                batch_size = int(data.get('batch_size', 20))
 
-   
-    @ns_topics.route('/tree')
-    class TopicTree(Resource):
-        @ns_topics.doc('get_topic_tree',
-            description='Get the hierarchical topic tree structure.',
-            responses={
-                200: 'Success. Returns the topic tree structure.',
-                400: 'Bad request. Topics may not have been created.',
-                500: 'Server error. An error occurred while fetching the topic tree.'
-            })
-        def get(self):
-            """Get the topic tree structure"""
-            try:
-                tree = bookmark_organizer.get_topic_tree()
-                return jsonify({"tree": tree})
-            except ValueError as e:
-                return {'message': str(e)}, 400
-            except Exception as e:
-                return {'message': 'An error occurred while fetching the topic tree', 'error': str(e)}, 500
+                if max_concurrent <= 0 or max_tags <= 0 or batch_size <= 0:
+                    return {'message': 'Invalid max_concurrent, max_tags, or batch_size. All must be positive integers.'}, 400
 
-    @ns_topics.route('/tree_json')
-    class TopicTreeJSON(Resource):
-        @ns_topics.doc('get_topic_tree_json',
-            description='Get the hierarchical topic tree structure as JSON.',
-            responses={
-                200: 'Success. Returns the topic tree structure as JSON.',
-                400: 'Bad request. Topics may not have been created.',
-                500: 'Server error. An error occurred while fetching the topic tree JSON.'
-            })
-        def get(self):
-            """Get the topic tree structure as JSON"""
-            try:
-                tree_json = bookmark_organizer.get_tree_json()
-                return jsonify(tree_json)
-            except ValueError as e:
-                return {'message': str(e)}, 400
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                result = loop.run_until_complete(bookmark_organizer.batch_tag_all_untagged_bookmarks(max_concurrent, max_tags, batch_size))
+                loop.close()
+
+                return result, 200
+            except ValueError as ve:
+                return {'message': f'Invalid parameter: {str(ve)}'}, 400
             except Exception as e:
-                return {'message': 'An error occurred while fetching the topic tree JSON', 'error': str(e)}, 500
+                return {'message': 'An error occurred while batch tagging bookmarks', 'error': str(e)}, 500
+
+        @ns_visualization.route('/scatter_plot')
+        class ScatterPlotVisualization(Resource):
+            @ns_visualization.doc('get_scatter_plot_data',
+                description='Get data for scatter plot visualization of bookmarks and their topics.',
+                responses={
+                    200: 'Success. Returns scatter plot data.',
+                    400: 'Bad request. Topics may not have been created.',
+                    500: 'Server error. An error occurred while fetching scatter plot data.'
+                })
+            def get(self):
+                """Get data for scatter plot visualization"""
+                try:
+                    scatter_data = bookmark_organizer.get_scatter_plot_data()
+                    return jsonify(scatter_data)
+                except ValueError as e:
+                    ns_visualization.logger.error(f"Error fetching scatter plot data: {str(e)}")
+                    return {'message': str(e)}, 400
+                except Exception as e:
+                    ns_visualization.logger.error(f"Error fetching scatter plot data: {str(e)}")
+                    return {'message': f'An error occurred while fetching scatter plot data: {str(e)}'}, 500
+
+        @ns_topics.route('/tree')
+        class TopicTree(Resource):
+            @ns_topics.doc('get_topic_tree',
+                description='Get the hierarchical topic tree structure.',
+                responses={
+                    200: 'Success. Returns the topic tree structure.',
+                    400: 'Bad request. Topics may not have been created.',
+                    500: 'Server error. An error occurred while fetching the topic tree.'
+                })
+            def get(self):
+                """Get the topic tree structure"""
+                try:
+                    tree = bookmark_organizer.get_topic_tree()
+                    return jsonify({"tree": tree})
+                except ValueError as e:
+                    return {'message': str(e)}, 400
+                except Exception as e:
+                    return {'message': 'An error occurred while fetching the topic tree', 'error': str(e)}, 500
+
+        @ns_topics.route('/tree_json')
+        class TopicTreeJSON(Resource):
+            @ns_topics.doc('get_topic_tree_json',
+                description='Get the hierarchical topic tree structure as JSON.',
+                responses={
+                    200: 'Success. Returns the topic tree structure as JSON.',
+                    400: 'Bad request. Topics may not have been created.',
+                    500: 'Server error. An error occurred while fetching the topic tree JSON.'
+                })
+            def get(self):
+                """Get the topic tree structure as JSON"""
+                try:
+                    tree_json = bookmark_organizer.get_tree_json()
+                    return jsonify(tree_json)
+                except ValueError as e:
+                    return {'message': str(e)}, 400
+                except Exception as e:
+                    return {'message': 'An error occurred while fetching the topic tree JSON', 'error': str(e)}, 500
 
     @ns_visualization.route('/sunburst')
     class SunburstVisualization(Resource):
@@ -171,7 +206,6 @@ def setup_routes(api: Api, bookmark_organizer):
                 return {'message': str(e)}, 400
             except Exception as e:
                 return {'message': 'An error occurred while fetching sunburst data', 'error': str(e)}, 500
-
 
     @ns_search.route('/')
     class Search(Resource):
