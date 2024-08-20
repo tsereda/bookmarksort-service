@@ -9,6 +9,7 @@ from scipy.cluster import hierarchy as sch
 from openai import OpenAI, AsyncOpenAI
 import json
 import asyncio
+from hdbscan import HDBSCAN
 
 class BookmarkDatabase:
     def __init__(self, db_name: str = "bookmarks.db"):
@@ -122,6 +123,58 @@ class BookmarkOrganizer:
         self.umap_model = UMAP(n_neighbors=15, n_components=2, min_dist=0.0, metric='cosine')
         self.hierarchical_topics = None
         self.client = AsyncOpenAI()
+
+        # HDBSCAN clustering parameters
+        self.min_cluster_size = 6
+        self.min_samples = None
+        self.metric = 'euclidean'
+        self.cluster_selection_method = 'eom'
+        self.prediction_data = True
+
+    def create_topics(self):
+        bookmarks = self.database.get_bookmarks()
+        if not bookmarks:
+            return {"message": "No bookmarks found. Add some bookmarks first."}
+
+        # Check if embeddings exist and are up-to-date
+        current_model = self.database.get_metadata('embedding_model')
+        if not current_model or current_model != "all-MiniLM-L6-v2":
+            self.generate_embeddings()
+
+        embeddings = self.database.get_embeddings()
+        if embeddings.size == 0:
+            return {"message": "Failed to generate embeddings. Please try again."}
+
+        docs = [f"{b['title']} {b['url']} {' '.join(b['tags'])}" for b in bookmarks]
+
+        try:
+            if self.topic_model is None:
+                # Initialize BERTopic with custom HDBSCAN parameters
+                hdbscan_model = HDBSCAN(
+                    min_cluster_size=self.min_cluster_size,
+                    min_samples=self.min_samples,
+                    metric=self.metric,
+                    cluster_selection_method=self.cluster_selection_method,
+                    prediction_data=self.prediction_data
+                )
+                self.topic_model = BERTopic(
+                    embedding_model=None,
+                    hdbscan_model=hdbscan_model,
+                    umap_model=self.umap_model
+                )
+            
+            topics, _ = self.topic_model.fit_transform(docs, embeddings=embeddings)
+            
+            for bookmark, topic in zip(bookmarks, topics):
+                self.database.update_bookmark_topic(bookmark['id'], int(topic))
+            
+            # Create hierarchical topics
+            self.hierarchical_topics = self.create_hierarchical_topics(docs)
+            
+            return {"message": f"Created topics for {len(bookmarks)} bookmarks"}
+        except Exception as e:
+            return {"message": f"An error occurred while creating topics: {str(e)}"}
+
 
     def generate_embeddings(self, embedding_model: str = "all-MiniLM-L6-v2"):
         current_model = self.database.get_metadata('embedding_model')
@@ -259,38 +312,6 @@ class BookmarkOrganizer:
         
         return scatter_data
 
-    def create_topics(self):
-        bookmarks = self.database.get_bookmarks()
-        if not bookmarks:
-            return {"message": "No bookmarks found. Add some bookmarks first."}
-
-        # Check if embeddings exist and are up-to-date
-        current_model = self.database.get_metadata('embedding_model')
-        if not current_model or current_model != "all-MiniLM-L6-v2":
-            self.generate_embeddings()
-
-        embeddings = self.database.get_embeddings()
-        if embeddings.size == 0:
-            return {"message": "Failed to generate embeddings. Please try again."}
-
-        docs = [f"{b['title']} {b['url']} {' '.join(b['tags'])}" for b in bookmarks]
-
-        try:
-            if self.topic_model is None:
-                self.topic_model = BERTopic(embedding_model=None)
-            
-            topics, _ = self.topic_model.fit_transform(docs, embeddings=embeddings)
-            
-            for bookmark, topic in zip(bookmarks, topics):
-                self.database.update_bookmark_topic(bookmark['id'], int(topic))
-            
-            # Create hierarchical topics
-            self.hierarchical_topics = self.create_hierarchical_topics(docs)
-            
-            return {"message": f"Created topics for {len(bookmarks)} bookmarks"}
-        except Exception as e:
-            return {"message": f"An error occurred while creating topics: {str(e)}"}
-    
     def create_hierarchical_topics(self, docs):
         try:
             linkage_function = lambda x: sch.linkage(x, 'ward', optimal_ordering=True)
