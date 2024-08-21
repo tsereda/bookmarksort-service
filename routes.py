@@ -151,26 +151,26 @@ def setup_routes(api: Api, bookmark_organizer):
             except Exception as e:
                 return {'message': 'An error occurred while batch tagging bookmarks', 'error': str(e)}, 500
 
-        @ns_visualization.route('/scatter_plot')
-        class ScatterPlotVisualization(Resource):
-            @ns_visualization.doc('get_scatter_plot_data',
-                description='Get data for scatter plot visualization of bookmarks and their topics.',
-                responses={
-                    200: 'Success. Returns scatter plot data.',
-                    400: 'Bad request. Topics may not have been created.',
-                    500: 'Server error. An error occurred while fetching scatter plot data.'
-                })
-            def get(self):
-                """Get data for scatter plot visualization"""
-                try:
-                    scatter_data = bookmark_organizer.get_scatter_plot_data()
-                    return jsonify(scatter_data)
-                except ValueError as e:
-                    ns_visualization.logger.error(f"Error fetching scatter plot data: {str(e)}")
-                    return {'message': str(e)}, 400
-                except Exception as e:
-                    ns_visualization.logger.error(f"Error fetching scatter plot data: {str(e)}")
-                    return {'message': f'An error occurred while fetching scatter plot data: {str(e)}'}, 500
+    @ns_visualization.route('/scatter_plot')
+    class ScatterPlotVisualization(Resource):
+        @ns_visualization.doc('get_scatter_plot_data',
+            description='Get data for scatter plot visualization of bookmarks and their topics.',
+            responses={
+                200: 'Success. Returns scatter plot data.',
+                400: 'Bad request. Topics may not have been created.',
+                500: 'Server error. An error occurred while fetching scatter plot data.'
+            })
+        def get(self):
+            """Get data for scatter plot visualization"""
+            try:
+                scatter_data = bookmark_organizer.get_scatter_plot_data()
+                return jsonify(scatter_data)
+            except ValueError as e:
+                ns_visualization.logger.error(f"Error fetching scatter plot data: {str(e)}")
+                return {'message': str(e)}, 400
+            except Exception as e:
+                ns_visualization.logger.error(f"Error fetching scatter plot data: {str(e)}")
+                return {'message': f'An error occurred while fetching scatter plot data: {str(e)}'}, 500
 
         @ns_topics.route('/tree')
         class TopicTree(Resource):

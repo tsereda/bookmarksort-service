@@ -307,7 +307,11 @@ class BookmarkOrganizer:
                 'id': bookmark['id'],
                 'x': float(reduced_embeddings[i, 0]),
                 'y': float(reduced_embeddings[i, 1]),
-                'topic': int(bookmark['topic'])
+                'topic': int(bookmark['topic']),
+                'title': bookmark['title'],
+                'url': bookmark['url'],
+                'tags': bookmark['tags'],
+                'topicName': f"Topic {bookmark['topic']}"  # Add a human-readable topic name
             })
         
         return scatter_data
