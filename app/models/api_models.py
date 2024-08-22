@@ -28,7 +28,11 @@ def create_models(api):
         'id': fields.Integer(description='Bookmark ID'),
         'x': fields.Float(description='X coordinate'),
         'y': fields.Float(description='Y coordinate'),
-        'topic': fields.Integer(description='Topic ID')
+        'topic': fields.Integer(description='Topic ID'),
+        'title': fields.String(description='Bookmark title'),
+        'url': fields.String(description='Bookmark URL'),
+        'tags': fields.List(fields.String, description='List of tags'),
+        'color': fields.String(description='Color associated with the topic')
     })
 
     embedding_request = api.model('EmbeddingRequest', {
