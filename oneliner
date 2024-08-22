@@ -1,1 +1,2 @@
 find app -name "*.py" -type f | xargs -I {} sh -c 'echo "=== {} ==="; cat {}; echo' >> concatenated_directory_files.txt
+find app -name "*.py" -type f | sort | xargs -I {} sh -c 'echo "=== {} ==="; cat {}; echo' >> concatenated_directory_files.txt
