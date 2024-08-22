@@ -20,6 +20,9 @@ class BookmarkDatabase:
             c.execute('''CREATE TABLE IF NOT EXISTS metadata
                          (key TEXT PRIMARY KEY,
                           value TEXT)''')
+            c.execute('''CREATE TABLE IF NOT EXISTS topics
+                         (id INTEGER PRIMARY KEY,
+                          name TEXT)''')
             conn.commit()
 
     def add_bookmark(self, bookmark: Dict[str, Any]) -> int:
@@ -106,3 +109,18 @@ class BookmarkDatabase:
                 WHERE id = ?
             """, (','.join(tags), bookmark_id))
             conn.commit()
+
+    def update_topic_name(self, topic_id: int, name: str):
+        with sqlite3.connect(self.db_name) as conn:
+            c = conn.cursor()
+            c.execute("""
+                INSERT OR REPLACE INTO topics (id, name)
+                VALUES (?, ?)
+            """, (topic_id, name))
+            conn.commit()
+
+    def get_topic_names(self) -> Dict[int, str]:
+        with sqlite3.connect(self.db_name) as conn:
+            c = conn.cursor()
+            c.execute("SELECT id, name FROM topics")
+            return {row[0]: row[1] for row in c.fetchall()}

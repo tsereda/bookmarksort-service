@@ -25,6 +25,54 @@ class TopicService:
         self.cluster_selection_method = 'eom'
         self.prediction_data = True
 
+    def get_topic_names(self) -> Dict[int, str]:
+        stored_names = self.database.get_topic_names()
+        if self.topic_model:
+            model_names = self.topic_model.get_topic_info()['Name'].to_dict()
+            # Merge stored names with model names, preferring stored names
+            return {**model_names, **stored_names}
+        return stored_names
+
+    async def regenerate_topic_names(self):
+        if self.topic_model is None:
+            raise ValueError("Topics have not been created. Call create_topics() first.")
+
+        topics = self.topic_model.get_topics()
+        new_names = {}
+
+        for topic_id, topic_words in topics.items():
+            if topic_id != -1:  # Skip the outlier topic
+                words = [word for word, _ in topic_words[:10]]  # Get top 10 words
+                new_name = await self._generate_topic_name(words)
+                new_names[topic_id] = new_name
+                self.database.update_topic_name(topic_id, new_name)
+
+        # Update topic names in the model
+        self.topic_model.set_topic_labels(new_names)
+
+        return {"message": f"Regenerated names for {len(new_names)} topics"}
+
+    def get_scatter_plot_data(self):
+        bookmarks = self.database.get_bookmarks()
+        embeddings = self.get_embeddings()
+        reduced_embeddings = self.reduce_embeddings(embeddings)
+        topic_names = self.get_topic_names()
+
+        scatter_data = []
+        for i, bookmark in enumerate(bookmarks):
+            topic_id = bookmark['topic']
+            scatter_data.append({
+                'id': bookmark['id'],
+                'x': float(reduced_embeddings[i, 0]),
+                'y': float(reduced_embeddings[i, 1]),
+                'topic': topic_id,
+                'topicName': topic_names.get(topic_id, f"Topic {topic_id}"),
+                'title': bookmark['title'],
+                'url': bookmark['url'],
+                'tags': bookmark['tags'],
+            })
+        return scatter_data
+
     def get_embeddings(self) -> np.ndarray:
         return self.embedding_service.get_embeddings()
     
@@ -151,7 +199,7 @@ class TopicService:
         for topic_id, name in new_names.items():
             self.database.update_topic_name(topic_id, name)
 
-        return {"message": f"Regenerated names for {len(new_names)} topics"}
+        return {"message": f"Named {new_names}"}
 
     async def _generate_topic_name(self, words: List[str]) -> str:
         prompt = f"Given the following words representing a topic, generate a short, descriptive name for this topic: {', '.join(words)}"
