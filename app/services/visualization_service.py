@@ -66,7 +66,8 @@ class VisualizationService:
                 node["value"] = max(total_value, 1)  # Ensure the value is at least 1
 
             mid_angle = (start_angle + end_angle) / 2
-            node["color"] = color_service.get_color(topic_id, depth, mid_angle)
+            node["color"] = color_service.get_color(topic_id, mid_angle, depth)
+            
             if "name" in node and depth > 0:
                 node["name"] = topic_names.get(topic_id, node["name"])
 

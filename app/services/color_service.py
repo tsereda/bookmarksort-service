@@ -1,5 +1,5 @@
 import colorsys
-from typing import Dict, Optional
+from typing import Dict, Tuple
 import math
 
 class ColorService:
@@ -7,24 +7,21 @@ class ColorService:
         self.color_map: Dict[int, str] = {}
         self.golden_ratio_conjugate = 0.618033988749895
 
-    def get_color(self, topic_id: int, depth: int = 0, angle: Optional[float] = None) -> str:
-        if topic_id in self.color_map:
-            return self.color_map[topic_id]
+    def get_color(self, identifier: int, angle: float = None, depth: int = 0) -> str:
+        if identifier == 0:  # Root node
+            return "rgba(255, 255, 255, 0)"  # Transparent
 
         if angle is not None:
-            # Use angle for hierarchical visualizations (e.g., sunburst)
-            hue = (angle / (2 * math.pi)) % 1.0
+            # Sunburst visualization
+            hue = angle / (2 * math.pi)
         else:
-            # Use topic_id for non-hierarchical visualizations (e.g., scatter plot)
-            hue = (topic_id * self.golden_ratio_conjugate) % 1.0
+            # Scatter plot
+            hue = (identifier * self.golden_ratio_conjugate) % 1.0
 
-        # Adjust saturation and lightness based on depth
-        saturation = max(0.5, 1 - (depth * 0.1))
-        lightness = min(0.6, 0.4 + (depth * 0.1))
+        saturation = 0.7  # Fixed saturation for more vibrant colors
+        lightness = max(0.3, min(0.7, 0.5 + depth * 0.05))  # Adjust lightness based on depth
 
-        color = self._hsl_to_hex(hue, saturation, lightness)
-        self.color_map[topic_id] = color
-        return color
+        return self._hsl_to_hex(hue, saturation, lightness)
 
     @staticmethod
     def _hsl_to_hex(h: float, s: float, l: float) -> str:
