@@ -1,10 +1,12 @@
 from flask import jsonify
 from flask_restx import Namespace, Resource
 from ..models.api_models import create_models
+import logging
 
 visualizations_ns = Namespace('visualizations', description='Visualization operations')
 
 _, _, _, scatter_plot_point, _ = create_models(visualizations_ns)
+logger = logging.getLogger(__name__)
 
 @visualizations_ns.route('/scatter_plot')
 class ScatterPlotVisualization(Resource):
@@ -22,10 +24,10 @@ class ScatterPlotVisualization(Resource):
             scatter_data = visualizations_ns.visualization_service.get_scatter_plot_data()
             return scatter_data, 200
         except ValueError as e:
-            visualizations_ns.logger.error(f"Error fetching scatter plot data: {str(e)}")
+            logger.error(f"Error fetching scatter plot data: {str(e)}")
             return {'message': str(e)}, 400
         except Exception as e:
-            visualizations_ns.logger.error(f"Error fetching scatter plot data: {str(e)}")
+            logger.error(f"Unexpected error in get_scatter_plot_data: {str(e)}", exc_info=True)
             return {'message': f'An error occurred while fetching scatter plot data: {str(e)}'}, 500
 
 @visualizations_ns.route('/sunburst')
@@ -40,9 +42,13 @@ class SunburstVisualization(Resource):
     def get(self):
         """Get data for sunburst visualization"""
         try:
+            logger.info("Attempting to fetch sunburst data")
             sunburst_data = visualizations_ns.visualization_service.get_sunburst_data()
-            if "error" in sunburst_data:
-                return {'message': sunburst_data["error"]}, 400
+            logger.info("Successfully fetched sunburst data")
             return jsonify(sunburst_data)
+        except ValueError as e:
+            logger.error(f"ValueError in get_sunburst_data: {str(e)}")
+            return {'message': str(e)}, 400
         except Exception as e:
+            logger.error(f"Unexpected error in get_sunburst_data: {str(e)}", exc_info=True)
             return {'message': 'An error occurred while fetching sunburst data', 'error': str(e)}, 500
